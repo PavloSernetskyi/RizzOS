@@ -1,0 +1,179 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-display: var(--font-sans);
+}
+
+html,
+body {
+  height: 100%;
+  background: #05060a;
+  color: #e8ecf5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  min-height: 100dvh;
+}
+
+/* Ambient field behind everything */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      60% 60% at 50% 20%,
+      rgba(124, 92, 255, 0.16) 0%,
+      rgba(5, 6, 10, 0) 60%
+    ),
+    radial-gradient(
+      40% 40% at 80% 80%,
+      rgba(255, 92, 138, 0.1) 0%,
+      rgba(5, 6, 10, 0) 60%
+    ),
+    radial-gradient(
+      40% 40% at 10% 90%,
+      rgba(57, 208, 216, 0.1) 0%,
+      rgba(5, 6, 10, 0) 60%
+    ),
+    #05060a;
+}
+
+.ambient::after {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(
+    ellipse at center,
+    black 0%,
+    transparent 70%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse at center,
+    black 0%,
+    transparent 70%
+  );
+  opacity: 0.5;
+}
+
+/* Conic gradient used as Rizzy's shimmering core */
+.orb-core {
+  background: conic-gradient(
+    from 0deg,
+    #7c5cff,
+    #39d0d8,
+    #b388ff,
+    #ff5c8a,
+    #7c5cff
+  );
+  background-size: 200% 200%;
+}
+
+.orb-core-hot {
+  background: conic-gradient(
+    from 0deg,
+    #ff5c8a,
+    #b388ff,
+    #7c5cff,
+    #ff5c8a
+  );
+  background-size: 200% 200%;
+}
+
+.orb-core-cool {
+  background: conic-gradient(
+    from 0deg,
+    #39d0d8,
+    #7c5cff,
+    #b388ff,
+    #39d0d8
+  );
+  background-size: 200% 200%;
+}
+
+/* Subtle grain on top of the orb for a premium feel */
+.orb-grain {
+  background-image:
+    radial-gradient(
+      circle at 30% 30%,
+      rgba(255, 255, 255, 0.35) 0%,
+      rgba(255, 255, 255, 0) 40%
+    ),
+    radial-gradient(
+      circle at 70% 70%,
+      rgba(0, 0, 0, 0.25) 0%,
+      rgba(0, 0, 0, 0) 50%
+    );
+  mix-blend-mode: overlay;
+}
+
+/* Equalizer bars (speaking state) */
+.bar {
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(to top, #7c5cff, #b388ff);
+  animation: barPulse 0.9s ease-in-out infinite;
+}
+.bar:nth-child(1) {
+  animation-delay: -0.1s;
+}
+.bar:nth-child(2) {
+  animation-delay: -0.3s;
+}
+.bar:nth-child(3) {
+  animation-delay: -0.5s;
+}
+.bar:nth-child(4) {
+  animation-delay: -0.2s;
+}
+.bar:nth-child(5) {
+  animation-delay: -0.4s;
+}
+@keyframes barPulse {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* Nice scrollbar in the transcript */
+.rizz-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.rizz-scroll::-webkit-scrollbar-thumb {
+  background: rgba(179, 136, 255, 0.25);
+  border-radius: 999px;
+}
+.rizz-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Accessibility: respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .animate-float,
+  .animate-pulseSoft,
+  .animate-pulseStrong,
+  .animate-think,
+  .animate-speak,
+  .animate-orbit,
+  .animate-orbit-rev,
+  .animate-shimmer {
+    animation: none !important;
+  }
+}
