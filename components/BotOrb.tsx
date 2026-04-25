@@ -9,59 +9,72 @@ interface BotOrbProps {
 /**
  * Rizzy's animated presence.
  *
- * Four visual states:
- *   idle      — slow float + soft breathing pulse
- *   listening — stronger pulse + faster ring rotation
- *   thinking  — slow counter-rotating orbits, dimmer core
- *   speaking  — bright bursty scaling + equalizer bars
+ * Visual states:
+ *   idle           — slow float + soft breathing pulse
+ *   listening      — stronger pulse + faster ring rotation
+ *   processing     — slow counter-rotating orbits, dimmer core (thinking)
+ *   speaking       — bright bursty scaling + equalizer bars
+ *   error_retry    — pulsing red glow
+ *   fallback_text  — calm, dimmed, no rotation
  */
 export function BotOrb({ status, personality }: BotOrbProps) {
   const coreClass =
-    personality.key === "savage"
+    status === "error_retry"
       ? "orb-core-hot"
-      : personality.key === "playful"
-        ? "orb-core-cool"
-        : "orb-core";
+      : personality.key === "savage"
+        ? "orb-core-hot"
+        : personality.key === "playful"
+          ? "orb-core-cool"
+          : "orb-core";
 
   const pulseClass =
     status === "listening"
       ? "animate-pulseStrong"
       : status === "speaking"
         ? "animate-speak"
-        : status === "thinking"
+        : status === "processing"
           ? "animate-pulseSoft opacity-80"
-          : "animate-pulseSoft";
+          : status === "error_retry"
+            ? "animate-pulseStrong"
+            : status === "fallback_text"
+              ? "opacity-60"
+              : "animate-pulseSoft";
 
-  const floatClass = status === "thinking" ? "" : "animate-float";
+  const floatClass =
+    status === "processing" || status === "fallback_text" ? "" : "animate-float";
 
   const ringOuterSpeed =
     status === "listening" || status === "speaking"
       ? "animate-orbit"
-      : "animate-orbit [animation-duration:28s]";
+      : status === "fallback_text"
+        ? ""
+        : "animate-orbit [animation-duration:28s]";
   const ringInnerSpeed =
-    status === "thinking"
+    status === "processing"
       ? "animate-orbit-rev [animation-duration:10s]"
-      : "animate-orbit-rev";
+      : status === "fallback_text"
+        ? ""
+        : "animate-orbit-rev";
 
   return (
     <div
       className={`relative grid place-items-center ${floatClass}`}
       aria-hidden
     >
-      {/* Outer soft glow */}
       <div
         className={`absolute inset-0 -m-16 rounded-full blur-3xl opacity-60 ${personality.accent.shadow}`}
         style={{
           background:
-            personality.key === "savage"
-              ? "radial-gradient(closest-side, rgba(255,92,138,0.45), transparent 70%)"
-              : personality.key === "playful"
-                ? "radial-gradient(closest-side, rgba(57,208,216,0.45), transparent 70%)"
-                : "radial-gradient(closest-side, rgba(124,92,255,0.5), transparent 70%)",
+            status === "error_retry"
+              ? "radial-gradient(closest-side, rgba(255,92,138,0.5), transparent 70%)"
+              : personality.key === "savage"
+                ? "radial-gradient(closest-side, rgba(255,92,138,0.45), transparent 70%)"
+                : personality.key === "playful"
+                  ? "radial-gradient(closest-side, rgba(57,208,216,0.45), transparent 70%)"
+                  : "radial-gradient(closest-side, rgba(124,92,255,0.5), transparent 70%)",
         }}
       />
 
-      {/* Outer rotating ring */}
       <div
         className={`absolute rounded-full ${ringOuterSpeed}`}
         style={{
@@ -71,7 +84,6 @@ export function BotOrb({ status, personality }: BotOrbProps) {
         }}
       />
 
-      {/* Inner rotating ring */}
       <div
         className={`absolute rounded-full ${ringInnerSpeed}`}
         style={{
@@ -83,14 +95,13 @@ export function BotOrb({ status, personality }: BotOrbProps) {
         }}
       />
 
-      {/* The orb itself */}
       <div
         className={`relative rounded-full ${coreClass} animate-shimmer ${pulseClass}`}
         style={{
           width: "min(52vw, 220px)",
           height: "min(52vw, 220px)",
           boxShadow:
-            personality.key === "savage"
+            personality.key === "savage" || status === "error_retry"
               ? "0 0 60px rgba(255,92,138,0.5), inset 0 0 40px rgba(255,255,255,0.15)"
               : personality.key === "playful"
                 ? "0 0 60px rgba(57,208,216,0.5), inset 0 0 40px rgba(255,255,255,0.15)"
@@ -98,11 +109,8 @@ export function BotOrb({ status, personality }: BotOrbProps) {
         }}
       >
         <div className="absolute inset-0 rounded-full orb-grain" />
-
-        {/* Inner dark core to read like a "pupil" */}
         <div className="absolute inset-[18%] rounded-full bg-[#0a0b14]/70 backdrop-blur-sm" />
 
-        {/* Equalizer when speaking */}
         {status === "speaking" && (
           <div className="absolute inset-0 grid place-items-center">
             <div className="flex items-end gap-1 h-10">
@@ -115,8 +123,7 @@ export function BotOrb({ status, personality }: BotOrbProps) {
           </div>
         )}
 
-        {/* Thinking dots */}
-        {status === "thinking" && (
+        {status === "processing" && (
           <div className="absolute inset-0 grid place-items-center">
             <div className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-white/70 animate-pulseSoft" />
@@ -126,7 +133,6 @@ export function BotOrb({ status, personality }: BotOrbProps) {
           </div>
         )}
 
-        {/* Listening ring */}
         {status === "listening" && (
           <div className="absolute inset-[5%] rounded-full ring-2 ring-white/20" />
         )}
