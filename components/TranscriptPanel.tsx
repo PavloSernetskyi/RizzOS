@@ -13,7 +13,7 @@ export function TranscriptPanel({ messages, className }: TranscriptPanelProps) {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length]);
+  }, [messages.length, messages[messages.length - 1]?.text]);
 
   return (
     <section
@@ -57,10 +57,17 @@ export function TranscriptPanel({ messages, className }: TranscriptPanelProps) {
                       : "bg-gradient-to-br from-rizz-accent2/25 to-rizz-accent/15 text-rizz-ink rounded-bl-md border border-rizz-accent/15",
                   ].join(" ")}
                 >
-                  <div className="text-[10px] uppercase tracking-wider text-rizz-mute/80 mb-0.5">
+                  <div className="text-[10px] uppercase tracking-wider text-rizz-mute/80 mb-0.5 flex items-center gap-1">
                     {m.speaker === "user" ? "You" : "Rizzy"}
+                    {m.pending && (
+                      <span className="inline-flex items-center gap-0.5">
+                        <span className="h-1 w-1 rounded-full bg-rizz-accent animate-pulseSoft" />
+                        <span className="h-1 w-1 rounded-full bg-rizz-accent animate-pulseSoft [animation-delay:120ms]" />
+                        <span className="h-1 w-1 rounded-full bg-rizz-accent animate-pulseSoft [animation-delay:240ms]" />
+                      </span>
+                    )}
                   </div>
-                  {m.text}
+                  {m.text || (m.pending ? "…" : "")}
                 </div>
               </li>
             ))}

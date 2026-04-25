@@ -7,8 +7,10 @@ interface StatusBadgeProps {
 const COPY: Record<RizzyStatus, { label: string; dot: string }> = {
   idle: { label: "Rizzy is here", dot: "bg-rizz-mute" },
   listening: { label: "Rizzy is listening…", dot: "bg-rizz-accent" },
-  thinking: { label: "Rizzy is thinking…", dot: "bg-rizz-cool" },
+  processing: { label: "Rizzy is thinking…", dot: "bg-rizz-cool" },
   speaking: { label: "Rizzy is speaking…", dot: "bg-rizz-hot" },
+  error_retry: { label: "Hiccup. Tap to retry.", dot: "bg-rizz-hot" },
+  fallback_text: { label: "Text mode (voice unavailable)", dot: "bg-rizz-mute" },
 };
 
 export function StatusBadge({ status }: StatusBadgeProps) {
