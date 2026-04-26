@@ -10,6 +10,11 @@ import {
 } from "@/lib/fallback";
 import { groqClient, SentenceStreamer } from "@/lib/groq";
 import { TurnTimer } from "@/lib/latency";
+import {
+  parseLeadingCue,
+  stripAllCues,
+  type ExpressionOverride,
+} from "@/lib/expression";
 import type { Message, RizzyStatus } from "@/types/conversation";
 import type { LatencyTurn } from "@/types/latency";
 import type { Personality } from "@/types/personality";
@@ -50,7 +55,15 @@ export interface UseRizzyConversationReturn {
   switchToTextFallback: () => void;
 }
 
-const MAX_HISTORY_TURNS = 8; // Keep last N exchanges to bound prompt size.
+// Bigger window = better callbacks ("the caramel from earlier"). Llama 3.3
+// has 128k context so this is nowhere near a limit; we just keep prompts
+// snappy. 12 turns ≈ 24 messages.
+const MAX_HISTORY_TURNS = 12;
+
+// Auto-end the session if the user is silent for this long while in the
+// "listening" state. Protects against the "tab left open" billing trap.
+// Reset on any voice activity (speech start, partial transcripts).
+const IDLE_TIMEOUT_MS = 60_000;
 
 function uid(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -79,6 +92,7 @@ export function useRizzyConversation(
   const inFlightAbortRef = useRef<AbortController | null>(null);
   const wantsActiveRef = useRef<boolean>(false);
   const fallbackRef = useRef<boolean>(false);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep personality ref synced; voice updates apply to the active TTS client.
   useEffect(() => {
@@ -91,6 +105,36 @@ export function useRizzyConversation(
   const setStatusSafe = useCallback((s: RizzyStatus) => {
     setStatus(s);
   }, []);
+
+  // Idle watchdog: if the user opens a session, taps "Talk to Rizzy", and
+  // then walks away, we don't want the mic + Azure billing meter to keep
+  // ticking forever. We arm a timer whenever we enter "listening" and
+  // reset it on any voice activity (speech start, partial transcripts).
+  const clearIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+  }, []);
+
+  const armIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => {
+      idleTimerRef.current = null;
+      // Mirror what stop() does, but with a friendly nudge so the user
+      // knows the session ended on purpose, not because of a bug.
+      wantsActiveRef.current = false;
+      inFlightAbortRef.current?.abort();
+      inFlightAbortRef.current = null;
+      sttRef.current?.stop().catch(() => {});
+      ttsRef.current?.cancel().catch(() => {});
+      setPartialUserText("");
+      setStatusSafe("idle");
+      setError(
+        "Session ended — no activity for a minute. Tap Talk to Rizzy to keep going.",
+      );
+    }, IDLE_TIMEOUT_MS);
+  }, [setStatusSafe]);
 
   const ensureClients = useCallback(async () => {
     // Pick STT
@@ -166,14 +210,32 @@ export function useRizzyConversation(
       const abort = new AbortController();
       inFlightAbortRef.current = abort;
 
-      const enqueueSentence = (sentence: string) => {
+      // Active emotion cue carries across sentences within a single turn —
+      // so "[warm] Hey there. How's your day?" speaks BOTH sentences warm
+      // even though only the first carries the explicit cue.
+      let activeExpression: ExpressionOverride | undefined;
+
+      const enqueueSentence = (rawSentence: string) => {
         const tts = ttsRef.current;
         if (!tts) return;
         if (timer.finalize().ttsRequestedAt === undefined) {
           timer.mark("ttsRequestedAt");
         }
+
+        // Strip a leading "[cue]" off the spoken text, but only for TTS —
+        // the transcript still shows it so the user reads Rizzy's mood.
+        // stripAllCues handles any inline cues the model snuck in
+        // mid-sentence so Azure doesn't read them literally.
+        const parsed = parseLeadingCue(rawSentence);
+        if (parsed.expression) activeExpression = parsed.expression;
+        const spoken = stripAllCues(parsed.cleanText);
+        if (!spoken) return;
+
+        const expression = activeExpression;
+
         ttsQueueTail = ttsQueueTail.then(() =>
-          tts.speak(sentence, {
+          tts.speak(spoken, {
+            expression,
             onFirstAudio: () => {
               timer.mark("firstAudioAt");
               setStatusSafe("speaking");
@@ -183,7 +245,7 @@ export function useRizzyConversation(
               if (!fallbackRef.current && tts === azureTtsRef.current) {
                 fallbackRef.current = true;
                 ttsRef.current = new BrowserTTSClient();
-                ttsRef.current.speak(sentence, {
+                ttsRef.current.speak(spoken, {
                   onFirstAudio: () => {
                     timer.mark("firstAudioAt");
                     setStatusSafe("speaking");
@@ -266,6 +328,58 @@ export function useRizzyConversation(
     [onMessage, onMessageUpdate, onLatency, setStatusSafe],
   );
 
+  /* ----------------- greeting (Rizzy speaks first) ----------------- */
+
+  /**
+   * On `start()`, before opening the mic, Rizzy says a short personality-
+   * specific opener. Doubles as a friendly hello AND as a TTS warm-up so
+   * the *next* turn (the user's first reply) hits with much lower latency.
+   */
+  const speakGreetingInternal = useCallback(async () => {
+    const tts = ttsRef.current;
+    const personalityNow = personalityRef.current;
+    const lines = personalityNow.idleLines;
+    if (!tts || !lines.length) return;
+
+    const greeting = lines[Math.floor(Math.random() * lines.length)];
+    const id = uid();
+
+    // Authored idleLines may carry a leading "[cue]" — strip for TTS,
+    // keep for transcript so the user reads Rizzy's vibe in the UI.
+    const parsed = parseLeadingCue(greeting);
+    const spoken = stripAllCues(parsed.cleanText) || greeting;
+
+    onMessage({
+      id,
+      speaker: "rizzy",
+      text: greeting,
+      createdAt: Date.now(),
+    });
+
+    setStatusSafe("speaking");
+
+    await new Promise<void>((resolve) => {
+      tts.speak(spoken, {
+        expression: parsed.expression,
+        onComplete: () => resolve(),
+        onError: (err) => {
+          // Greeting is best-effort. If Azure TTS fails here, swap to
+          // browser TTS for the rest of the session and keep going.
+          if (!fallbackRef.current && tts === azureTtsRef.current) {
+            fallbackRef.current = true;
+            ttsRef.current = new BrowserTTSClient();
+            ttsRef.current
+              .speak(spoken, { onComplete: () => resolve() })
+              .catch(() => resolve());
+          } else {
+            console.warn("Greeting TTS error (suppressed):", err);
+            resolve();
+          }
+        },
+      });
+    });
+  }, [onMessage, setStatusSafe]);
+
   /* ----------------- listening control ----------------- */
 
   const startListeningInternal = useCallback(async () => {
@@ -276,11 +390,21 @@ export function useRizzyConversation(
     const timer = new TurnTimer();
     turnTimerRef.current = timer;
 
+    // Start the idle watchdog. Any voice activity below resets it.
+    armIdleTimer();
+
     await stt.start({
-      onSpeechStart: () => timer.mark("speechStartedAt"),
+      onSpeechStart: () => {
+        timer.mark("speechStartedAt");
+        armIdleTimer();
+      },
       onSpeechEnd: () => timer.mark("speechEndedAt"),
-      onPartial: (text) => setPartialUserText(text),
+      onPartial: (text) => {
+        setPartialUserText(text);
+        armIdleTimer();
+      },
       onFinal: async (text) => {
+        clearIdleTimer();
         timer.mark("transcriptReceivedAt");
         if (!timer.finalize().speechEndedAt) {
           // Some recognizers don't emit speechEndDetected — backfill.
@@ -291,11 +415,12 @@ export function useRizzyConversation(
         await runTurn(text, timer);
       },
       onError: (err) => {
+        clearIdleTimer();
         setError(err.message);
         setStatusSafe("error_retry");
       },
     });
-  }, [runTurn, setStatusSafe]);
+  }, [runTurn, setStatusSafe, armIdleTimer, clearIdleTimer]);
 
   /* ----------------- public API ----------------- */
 
@@ -305,6 +430,13 @@ export function useRizzyConversation(
     fallbackRef.current = false;
     try {
       await ensureClients();
+      // Rizzy greets first, then opens the mic. If the user taps End mid-
+      // greeting we honor that and don't fall through to listening.
+      await speakGreetingInternal();
+      if (!wantsActiveRef.current) {
+        setStatusSafe("idle");
+        return;
+      }
       await startListeningInternal();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Couldn't start.";
@@ -316,10 +448,11 @@ export function useRizzyConversation(
         setStatusSafe("error_retry");
       }
     }
-  }, [ensureClients, startListeningInternal, setStatusSafe]);
+  }, [ensureClients, speakGreetingInternal, startListeningInternal, setStatusSafe]);
 
   const stop = useCallback(async () => {
     wantsActiveRef.current = false;
+    clearIdleTimer();
     inFlightAbortRef.current?.abort();
     inFlightAbortRef.current = null;
     try {
@@ -330,7 +463,7 @@ export function useRizzyConversation(
     }
     setStatusSafe("idle");
     setPartialUserText("");
-  }, [setStatusSafe]);
+  }, [setStatusSafe, clearIdleTimer]);
 
   const sendText = useCallback(
     async (text: string) => {
@@ -352,14 +485,17 @@ export function useRizzyConversation(
 
   const switchToTextFallback = useCallback(() => {
     wantsActiveRef.current = false;
+    clearIdleTimer();
     sttRef.current?.stop().catch(() => {});
     setStatusSafe("fallback_text");
-  }, [setStatusSafe]);
+  }, [setStatusSafe, clearIdleTimer]);
 
   /* ----------------- lifecycle cleanup ----------------- */
 
   useEffect(() => {
     return () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
       sttRef.current?.dispose().catch(() => {});
       ttsRef.current?.dispose().catch(() => {});
       inFlightAbortRef.current?.abort();

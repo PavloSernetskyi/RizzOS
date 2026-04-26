@@ -8,6 +8,7 @@ import type {
   TTSSpeakOptions,
 } from "@/types/provider";
 import type { VoiceTuning } from "@/types/personality";
+import type { ExpressionOverride } from "@/lib/expression";
 
 interface AzureToken {
   token: string;
@@ -149,12 +150,21 @@ export class AzureSTTClient implements STTClient {
  * pushes sentences as the LLM streams them; this client speaks them in
  * order, fires `onFirstAudio` the moment the first sentence starts.
  *
- * We rebuild the underlying SpeechSynthesizer per call. This is the most
- * reliable path on browsers — the SDK's audio destination is one-shot.
+ * IMPORTANT — promise resolution timing:
+ *   `speakSsmlAsync`'s callback fires when SYNTHESIS completes, which is
+ *   before audio actually finishes playing through the speakers. If we
+ *   resolved on that callback, the next sentence would start synthesizing
+ *   AND its audio would overlap with the previous sentence's tail.
+ *   That's why we use `SpeakerAudioDestination` directly and hook its
+ *   `onAudioEnd` — that's the real "playback finished" signal.
+ *
+ * We rebuild the underlying SpeechSynthesizer per call because the SDK's
+ * audio destination is one-shot.
  */
 export class AzureTTSClient implements TTSClient {
   private voice: VoiceTuning;
   private current: Speech.SpeechSynthesizer | null = null;
+  private currentDest: Speech.SpeakerAudioDestination | null = null;
   private cancelled = false;
   private firstAudioFired = false;
 
@@ -173,12 +183,16 @@ export class AzureTTSClient implements TTSClient {
     const config = await buildSpeechConfig();
     config.speechSynthesisVoiceName = this.voice.voiceName;
 
-    const audio = Speech.AudioConfig.fromDefaultSpeakerOutput();
+    // Custom speaker destination so we can hook the *playback-finished*
+    // event (`onAudioEnd`), not just synthesis-finished. This is the
+    // single most important detail for clean back-to-back beats.
+    const destination = new Speech.SpeakerAudioDestination();
+    const audio = Speech.AudioConfig.fromSpeakerOutput(destination);
     const synth = new Speech.SpeechSynthesizer(config, audio);
     this.current = synth;
+    this.currentDest = destination;
     this.firstAudioFired = false;
 
-    // The SDK fires synthesisStarted right before audio begins playing.
     synth.synthesisStarted = () => {
       if (!this.firstAudioFired) {
         this.firstAudioFired = true;
@@ -186,34 +200,76 @@ export class AzureTTSClient implements TTSClient {
       }
     };
 
-    const ssml = this.buildSsml(sentence);
+    const ssml = this.buildSsml(sentence, opts.expression);
 
     return new Promise<void>((resolve) => {
+      let resolved = false;
+      let synthesisError: Error | null = null;
+      let safety: ReturnType<typeof setTimeout> | null = null;
+
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        if (safety) clearTimeout(safety);
+        try {
+          synth.close();
+        } catch {
+          /* swallow */
+        }
+        if (this.current === synth) this.current = null;
+        if (this.currentDest === destination) this.currentDest = null;
+        resolve();
+      };
+
+      // Real playback-finished signal. Fires after synthesis is complete
+      // AND every queued audio chunk has actually drained to the speakers.
+      destination.onAudioEnd = () => {
+        if (this.cancelled) return finish();
+        if (synthesisError) {
+          opts.onError?.(synthesisError);
+        } else {
+          opts.onComplete?.();
+        }
+        finish();
+      };
+
       synth.speakSsmlAsync(
         ssml,
         (result) => {
-          synth.close();
-          if (this.current === synth) this.current = null;
-          if (this.cancelled) {
-            resolve();
+          if (this.cancelled) return finish();
+          if (
+            result.reason !== Speech.ResultReason.SynthesizingAudioCompleted
+          ) {
+            // No audio will play (e.g. invalid voice name, expired token).
+            // Surface the error to the orchestrator NOW so it can fall back
+            // to browser TTS — onAudioEnd will never fire in this branch.
+            synthesisError = new Error(
+              `Azure TTS failed: ${result.errorDetails ?? "unknown"}`,
+            );
+            opts.onError?.(synthesisError);
+            finish();
             return;
           }
-          if (result.reason === Speech.ResultReason.SynthesizingAudioCompleted) {
-            opts.onComplete?.();
-          } else {
-            opts.onError?.(
-              new Error(
-                `Azure TTS failed: ${result.errorDetails ?? "unknown"}`,
-              ),
-            );
+          // Safety net: if onAudioEnd never fires (rare SDK edge case
+          // — e.g. AudioContext suspended), resolve based on the actual
+          // audio duration plus a 750ms cushion so the queue never wedges.
+          // audioDuration is in 100-ns ticks → ms = /10_000.
+          const ms = Math.ceil((result.audioDuration ?? 0) / 10_000) + 750;
+          if (ms > 0) {
+            safety = setTimeout(() => {
+              if (!resolved) {
+                opts.onComplete?.();
+                finish();
+              }
+            }, ms);
           }
-          resolve();
         },
         (err) => {
-          synth.close();
-          if (this.current === synth) this.current = null;
-          opts.onError?.(new Error(typeof err === "string" ? err : "TTS error"));
-          resolve();
+          synthesisError = new Error(
+            typeof err === "string" ? err : "TTS error",
+          );
+          opts.onError?.(synthesisError);
+          finish();
         },
       );
     });
@@ -222,15 +278,24 @@ export class AzureTTSClient implements TTSClient {
   async cancel(): Promise<void> {
     this.cancelled = true;
     const synth = this.current;
+    const dest = this.currentDest;
     this.current = null;
-    if (!synth) return;
-    try {
-      await new Promise<void>((resolve) => {
+    this.currentDest = null;
+    if (dest) {
+      try {
+        // close() stops in-flight playback AND fires `onAudioEnd`, which
+        // unblocks any pending speak() promise sitting in the queue.
+        dest.close();
+      } catch {
+        /* swallow */
+      }
+    }
+    if (synth) {
+      try {
         synth.close();
-        resolve();
-      });
-    } catch {
-      /* swallow */
+      } catch {
+        /* swallow */
+      }
     }
   }
 
@@ -238,34 +303,61 @@ export class AzureTTSClient implements TTSClient {
     await this.cancel();
   }
 
-  private buildSsml(text: string): string {
+  private buildSsml(text: string, expr?: ExpressionOverride): string {
     const v = this.voice;
-    const safe = escapeXml(text);
-    const styled = v.style
-      ? `<mstts:express-as style="${v.style}" styledegree="${v.styleDegree ?? 1}">${safe}</mstts:express-as>`
-      : safe;
-    const prosody =
-      v.rate || v.pitch
-        ? `<prosody rate="${v.rate ?? "0%"}" pitch="${v.pitch ?? "0%"}">${styled}</prosody>`
-        : styled;
+    const inner = humanizeForSsml(text);
 
-    return `
-<speak version="1.0"
-       xmlns="http://www.w3.org/2001/10/synthesis"
-       xmlns:mstts="http://www.w3.org/2001/mstts"
-       xml:lang="en-US">
-  <voice name="${v.voiceName}">
-    ${prosody}
-  </voice>
-</speak>`.trim();
+    // Per-utterance cue (from "[warm]", "[smirk]", etc.) overrides the
+    // personality's default style/styleDegree for THIS sentence only. This
+    // is what lets Rizzy shift mood mid-conversation the way ElevenLabs
+    // audio tags do.
+    const style = expr?.style ?? v.style ?? "chat";
+    const styleDeg = expr?.styleDegree ?? v.styleDegree ?? 1.1;
+    const styled = `<mstts:express-as style="${style}" styledegree="${styleDeg}">${inner}</mstts:express-as>`;
+
+    // Small `prosody` envelope so each personality has its own signature
+    // tempo/pitch even when the underlying voice is shared between modes.
+    // Cue can also nudge rate/pitch (e.g. "soft" pulls rate down).
+    const rate = expr?.rate ?? v.rate ?? "-2%";
+    const pitch = expr?.pitch ?? v.pitch ?? "0%";
+    const prosody = `<prosody rate="${rate}" pitch="${pitch}">${styled}</prosody>`;
+
+    return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US"><voice name="${v.voiceName}">${prosody}</voice></speak>`;
   }
 }
 
-function escapeXml(s: string): string {
-  return s
+/**
+ * Pre-process text before XML-escaping so Azure's prosody model has more to
+ * work with. The big wins are:
+ *   - turning "..." / "—" into real `<break>` tags (Azure mostly ignores
+ *     ellipses otherwise, which makes Rizzy sound rushed)
+ *   - softening run-on punctuation ("!!" -> "!") so the voice doesn't shout
+ *   - guaranteeing a sentence-final punctuation so intonation lands
+ */
+function humanizeForSsml(raw: string): string {
+  let t = raw.trim();
+  if (!t) return "";
+
+  // Collapse repeated terminal punctuation: "wait!!" -> "wait!"
+  t = t.replace(/([!?.])\1{1,}/g, "$1");
+
+  // Ensure the sentence ends with terminal punctuation so the voice
+  // doesn't trail off flat.
+  if (!/[.!?…]$/.test(t)) t = `${t}.`;
+
+  // Escape XML entities BEFORE injecting our own break tags.
+  const safe = t
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+
+  // Inject natural micro-pauses. Azure handles commas and periods well,
+  // but ellipses, em-dashes, and " - " are often steamrolled. Give them
+  // explicit breaks so Rizzy breathes.
+  return safe
+    .replace(/\.{3,}|…/g, '<break time="280ms"/>')
+    .replace(/\s—\s|\s--\s|\s-\s/g, '<break time="180ms"/>')
+    .replace(/,\s/g, ', <break time="80ms"/>');
 }

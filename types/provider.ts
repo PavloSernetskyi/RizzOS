@@ -6,6 +6,8 @@
  * implementation of these interfaces, not editing the UI.
  */
 
+import type { ExpressionOverride } from "@/lib/expression";
+
 export interface STTClient {
   /** Open the mic and begin streaming recognition. */
   start(handlers: STTHandlers): Promise<void>;
@@ -38,6 +40,12 @@ export interface TTSSpeakOptions {
   onFirstAudio?: () => void;
   onComplete?: () => void;
   onError?: (err: Error) => void;
+  /**
+   * Per-call SSML override sourced from a parsed emotion cue (e.g. `[warm]`).
+   * Lets a single utterance change voice mood without swapping the whole
+   * personality. Browser fallback ignores this field.
+   */
+  expression?: ExpressionOverride;
 }
 
 export interface LLMClient {

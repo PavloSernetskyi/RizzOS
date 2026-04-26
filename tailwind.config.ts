@@ -4,6 +4,11 @@ const config: Config = {
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
+    // Personality accent classes (from-rizz-cool, from-rizz-hot, ring-rizz-*,
+    // shadow-glow*, etc.) live in lib/personalities.ts. Without this glob,
+    // Tailwind's JIT can't see them and the Playful/Savage Talk button loses
+    // its gradient.
+    "./lib/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
     extend: {
