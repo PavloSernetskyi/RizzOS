@@ -150,12 +150,21 @@ export class AzureSTTClient implements STTClient {
  * pushes sentences as the LLM streams them; this client speaks them in
  * order, fires `onFirstAudio` the moment the first sentence starts.
  *
- * We rebuild the underlying SpeechSynthesizer per call. This is the most
- * reliable path on browsers — the SDK's audio destination is one-shot.
+ * IMPORTANT — promise resolution timing:
+ *   `speakSsmlAsync`'s callback fires when SYNTHESIS completes, which is
+ *   before audio actually finishes playing through the speakers. If we
+ *   resolved on that callback, the next sentence would start synthesizing
+ *   AND its audio would overlap with the previous sentence's tail.
+ *   That's why we use `SpeakerAudioDestination` directly and hook its
+ *   `onAudioEnd` — that's the real "playback finished" signal.
+ *
+ * We rebuild the underlying SpeechSynthesizer per call because the SDK's
+ * audio destination is one-shot.
  */
 export class AzureTTSClient implements TTSClient {
   private voice: VoiceTuning;
   private current: Speech.SpeechSynthesizer | null = null;
+  private currentDest: Speech.SpeakerAudioDestination | null = null;
   private cancelled = false;
   private firstAudioFired = false;
 
@@ -174,12 +183,16 @@ export class AzureTTSClient implements TTSClient {
     const config = await buildSpeechConfig();
     config.speechSynthesisVoiceName = this.voice.voiceName;
 
-    const audio = Speech.AudioConfig.fromDefaultSpeakerOutput();
+    // Custom speaker destination so we can hook the *playback-finished*
+    // event (`onAudioEnd`), not just synthesis-finished. This is the
+    // single most important detail for clean back-to-back beats.
+    const destination = new Speech.SpeakerAudioDestination();
+    const audio = Speech.AudioConfig.fromSpeakerOutput(destination);
     const synth = new Speech.SpeechSynthesizer(config, audio);
     this.current = synth;
+    this.currentDest = destination;
     this.firstAudioFired = false;
 
-    // The SDK fires synthesisStarted right before audio begins playing.
     synth.synthesisStarted = () => {
       if (!this.firstAudioFired) {
         this.firstAudioFired = true;
@@ -190,31 +203,71 @@ export class AzureTTSClient implements TTSClient {
     const ssml = this.buildSsml(sentence, opts.expression);
 
     return new Promise<void>((resolve) => {
+      let resolved = false;
+      let synthesisError: Error | null = null;
+      let safety: ReturnType<typeof setTimeout> | null = null;
+
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        if (safety) clearTimeout(safety);
+        try {
+          synth.close();
+        } catch {
+          /* swallow */
+        }
+        if (this.current === synth) this.current = null;
+        if (this.currentDest === destination) this.currentDest = null;
+        resolve();
+      };
+
+      // Real playback-finished signal. Fires after synthesis is complete
+      // AND every queued audio chunk has actually drained to the speakers.
+      destination.onAudioEnd = () => {
+        if (this.cancelled) return finish();
+        if (synthesisError) {
+          opts.onError?.(synthesisError);
+        } else {
+          opts.onComplete?.();
+        }
+        finish();
+      };
+
       synth.speakSsmlAsync(
         ssml,
         (result) => {
-          synth.close();
-          if (this.current === synth) this.current = null;
-          if (this.cancelled) {
-            resolve();
+          if (this.cancelled) return finish();
+          if (
+            result.reason !== Speech.ResultReason.SynthesizingAudioCompleted
+          ) {
+            synthesisError = new Error(
+              `Azure TTS failed: ${result.errorDetails ?? "unknown"}`,
+            );
+            // No audio will play; resolve immediately rather than wait
+            // for onAudioEnd that won't come.
+            finish();
             return;
           }
-          if (result.reason === Speech.ResultReason.SynthesizingAudioCompleted) {
-            opts.onComplete?.();
-          } else {
-            opts.onError?.(
-              new Error(
-                `Azure TTS failed: ${result.errorDetails ?? "unknown"}`,
-              ),
-            );
+          // Safety net: if onAudioEnd never fires (rare SDK edge case
+          // — e.g. AudioContext suspended), resolve based on the actual
+          // audio duration plus a 750ms cushion so the queue never wedges.
+          // audioDuration is in 100-ns ticks → ms = /10_000.
+          const ms = Math.ceil((result.audioDuration ?? 0) / 10_000) + 750;
+          if (ms > 0) {
+            safety = setTimeout(() => {
+              if (!resolved) {
+                opts.onComplete?.();
+                finish();
+              }
+            }, ms);
           }
-          resolve();
         },
         (err) => {
-          synth.close();
-          if (this.current === synth) this.current = null;
-          opts.onError?.(new Error(typeof err === "string" ? err : "TTS error"));
-          resolve();
+          synthesisError = new Error(
+            typeof err === "string" ? err : "TTS error",
+          );
+          opts.onError?.(synthesisError);
+          finish();
         },
       );
     });
@@ -223,15 +276,24 @@ export class AzureTTSClient implements TTSClient {
   async cancel(): Promise<void> {
     this.cancelled = true;
     const synth = this.current;
+    const dest = this.currentDest;
     this.current = null;
-    if (!synth) return;
-    try {
-      await new Promise<void>((resolve) => {
+    this.currentDest = null;
+    if (dest) {
+      try {
+        // close() stops in-flight playback AND fires `onAudioEnd`, which
+        // unblocks any pending speak() promise sitting in the queue.
+        dest.close();
+      } catch {
+        /* swallow */
+      }
+    }
+    if (synth) {
+      try {
         synth.close();
-        resolve();
-      });
-    } catch {
-      /* swallow */
+      } catch {
+        /* swallow */
+      }
     }
   }
 
