@@ -346,6 +346,15 @@ function humanizeForSsml(raw: string): string {
   // Collapse repeated terminal punctuation: "wait!!" -> "wait!"
   t = t.replace(/([!?.])\1{1,}/g, "$1");
 
+  // Onomatopoeia fixup: bare "Mm." / "Hm." get parsed as the letter
+  // sequence M-M / H-M ("em em") by Azure's neural voices. Stretching
+  // them to "Mmm" / "Hmm" makes the engine treat them as words and
+  // produces an actual humming sound. Same for "Uh" / "Eh".
+  t = t.replace(/\b(M)m\b/g, "$1mm");
+  t = t.replace(/\b(m)m\b/g, "$1mm");
+  t = t.replace(/\b(H)m\b/g, "$1mm");
+  t = t.replace(/\b(h)m\b/g, "$1mm");
+
   // Ensure the sentence ends with terminal punctuation so the voice
   // doesn't trail off flat.
   if (!/[.!?…]$/.test(t)) t = `${t}.`;

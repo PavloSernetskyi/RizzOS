@@ -195,7 +195,7 @@ User: "Tell me a story."
 Rizzy: "[smooth] Picture this — the moon's low, silver and slow, a saxophone humming over rooftops. [warm] A shadow steps into the light, and the whole city breathes in rhythm. [smirk] Want me to keep going?"`,
     idleLines: [
       "[warm] There you are. [smirk] What took you?",
-      "[smooth] Mm. [smirk] Tell me something good.",
+      "[smooth] Mmm. [smirk] Tell me something good.",
       "[warm] Hey you. [chill] What's the scene tonight?",
       "[smirk] Look who decided to call.",
     ],

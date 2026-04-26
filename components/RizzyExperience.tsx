@@ -1,17 +1,26 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Hero } from "@/components/Hero";
 import { LatencyOverlay } from "@/components/LatencyOverlay";
 import { PersonalitySelector } from "@/components/PersonalitySelector";
 import { TalkButton } from "@/components/TalkButton";
 import { TextFallbackInput } from "@/components/TextFallbackInput";
 import { TranscriptPanel } from "@/components/TranscriptPanel";
+import { VoiceLab } from "@/components/VoiceLab";
 import { useRizzyConversation } from "@/lib/conversationOrchestrator";
 import { DEFAULT_PERSONALITY, getPersonality } from "@/lib/personalities";
 import type { Message } from "@/types/conversation";
 import type { LatencyTurn } from "@/types/latency";
-import type { PersonalityKey } from "@/types/personality";
+import type { PersonalityKey, VoiceTuning } from "@/types/personality";
+
+const SHOW_VOICE_LAB = process.env.NEXT_PUBLIC_RIZZ_DEBUG === "1";
+
+const EMPTY_OVERRIDES: Record<PersonalityKey, VoiceTuning | null> = {
+  smooth: null,
+  playful: null,
+  savage: null,
+};
 
 export function RizzyExperience() {
   const [personalityKey, setPersonalityKey] = useState<PersonalityKey>(
@@ -19,8 +28,21 @@ export function RizzyExperience() {
   );
   const [messages, setMessages] = useState<Message[]>([]);
   const [lastLatency, setLastLatency] = useState<LatencyTurn | null>(null);
+  // Per-personality voice overrides driven by the Voice Lab. In-memory
+  // only — refreshing the page restores the personality defaults.
+  const [voiceOverrides, setVoiceOverrides] = useState<
+    Record<PersonalityKey, VoiceTuning | null>
+  >(EMPTY_OVERRIDES);
 
-  const personality = getPersonality(personalityKey);
+  const basePersonality = getPersonality(personalityKey);
+
+  // Splice in the Voice Lab override (if any) so the orchestrator's
+  // useEffect picks it up the same way it picks up a personality swap.
+  const personality = useMemo(() => {
+    const override = voiceOverrides[personalityKey];
+    if (!override) return basePersonality;
+    return { ...basePersonality, voice: override };
+  }, [basePersonality, personalityKey, voiceOverrides]);
 
   const handleMessage = useCallback((m: Message) => {
     setMessages((prev) => {
@@ -68,6 +90,13 @@ export function RizzyExperience() {
     [personalityKey],
   );
 
+  const handleVoiceOverride = useCallback(
+    (key: PersonalityKey, voice: VoiceTuning | null) => {
+      setVoiceOverrides((prev) => ({ ...prev, [key]: voice }));
+    },
+    [],
+  );
+
   return (
     <main className="relative mx-auto flex min-h-[100dvh] w-full max-w-6xl flex-col px-5 pb-8 sm:px-8">
       <div className="flex flex-1 flex-col gap-6 sm:gap-8">
@@ -107,6 +136,14 @@ export function RizzyExperience() {
                 value={personalityKey}
                 onChange={handlePersonalityChange}
               />
+
+              {SHOW_VOICE_LAB && (
+                <VoiceLab
+                  activePersonality={personalityKey}
+                  overrides={voiceOverrides}
+                  onOverrideChange={handleVoiceOverride}
+                />
+              )}
             </div>
           </div>
 
