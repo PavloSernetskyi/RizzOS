@@ -65,6 +65,10 @@ export interface LLMMessage {
 export interface LLMOptions {
   temperature: number;
   maxTokens: number;
+  /** -2..2. Higher = avoids repeating the same words/phrases. */
+  frequencyPenalty?: number;
+  /** -2..2. Higher = forces variety in topics each turn. */
+  presencePenalty?: number;
   signal?: AbortSignal;
 }
 

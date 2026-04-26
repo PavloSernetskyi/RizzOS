@@ -1,18 +1,25 @@
 export type PersonalityKey = "smooth" | "playful" | "savage";
 
 /**
- * Tunable knobs that affect "rizz quality" — both prompt-side and runtime.
- * Centralized so the orchestrator + prompt builder agree on the same numbers.
+ * Tunable knobs that affect "rizz quality" — all of these are passed to
+ * Groq at request time. Centralized so the orchestrator + prompt builder
+ * agree on the same numbers per personality.
+ *
+ * Quick reference for tuning when Rizzy feels "off":
+ *   - feeling BORING / REPETITIVE  →  raise temperature, raise frequencyPenalty
+ *   - feeling RAMBLY / RUNS LONG   →  lower maxTokens
+ *   - keeps revisiting same topic  →  raise presencePenalty
+ *   - going OFF THE RAILS / weird  →  lower temperature
  */
 export interface ResponseTuning {
-  /** Soft target for reply length. Used in the prompt + as max_tokens hint. */
-  maxWords: number;
   /** Hard cap on tokens we'll let Groq generate. Keeps replies snappy. */
   maxTokens: number;
-  /** 0–1. Higher = more creative / chaotic. */
+  /** 0–1.5. Higher = more creative / chaotic. Sweet spot 0.85–1.05. */
   temperature: number;
-  /** 0–10. Influences the prompt tone. Pure flavor. */
-  sassLevel: number;
+  /** -2..2. Higher = avoids word/phrase repetition. 0.3–0.6 sweet spot. */
+  frequencyPenalty: number;
+  /** -2..2. Higher = forces new topics each turn. 0.2–0.4 sweet spot. */
+  presencePenalty: number;
 }
 
 /**

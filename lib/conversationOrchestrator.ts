@@ -56,9 +56,11 @@ export interface UseRizzyConversationReturn {
 }
 
 // Bigger window = better callbacks ("the caramel from earlier"). Llama 3.3
-// has 128k context so this is nowhere near a limit; we just keep prompts
-// snappy. 12 turns ≈ 24 messages.
-const MAX_HISTORY_TURNS = 12;
+// has 128k context so this is nowhere near a hard limit; we just keep prompts
+// snappy. 8 turns ≈ 16 messages — enough for memory callbacks within a few
+// minutes of conversation, small enough that prompt processing stays fast.
+// (Was 12 in 2.2 — dropped to 8 in 2.3 for tighter time-to-first-token.)
+const MAX_HISTORY_TURNS = 8;
 
 // Auto-end the session if the user is silent for this long while in the
 // "listening" state. Protects against the "tab left open" billing trap.
@@ -330,6 +332,8 @@ export function useRizzyConversation(
           {
             temperature: personalityNow.response.temperature,
             maxTokens: personalityNow.response.maxTokens,
+            frequencyPenalty: personalityNow.response.frequencyPenalty,
+            presencePenalty: personalityNow.response.presencePenalty,
             signal: abort.signal,
           },
         );

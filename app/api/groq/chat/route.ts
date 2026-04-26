@@ -2,19 +2,15 @@ import Groq from "groq-sdk";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
+// Pin function to US-East — closest to Groq's serving infra. Without this,
+// Vercel runs the function near the user, which adds a transatlantic hop
+// per token for EU users. iad1 (Washington DC) gives the lowest TTFT.
+export const preferredRegion = ["iad1"];
 
 /**
  * Streaming chat endpoint. Forwards messages to Groq and pipes plain-text
  * deltas back as Server-Sent Events. Edge runtime keeps cold-start tiny
  * and supports streaming natively.
- *
- * Request body:
- *   {
- *     messages: [{ role, content }, ...],
- *     temperature?: number,
- *     maxTokens?: number,
- *     model?: string
- *   }
  */
 export async function POST(request: Request) {
   const apiKey = process.env.GROQ_API_KEY;
@@ -29,6 +25,8 @@ export async function POST(request: Request) {
     messages?: Array<{ role: "system" | "user" | "assistant"; content: string }>;
     temperature?: number;
     maxTokens?: number;
+    frequencyPenalty?: number;
+    presencePenalty?: number;
     model?: string;
   };
 
@@ -53,8 +51,10 @@ export async function POST(request: Request) {
 
   // Default: Llama 3.3 70B versatile — best quality/latency on Groq.
   const model = body.model ?? "llama-3.3-70b-versatile";
-  const temperature = clamp(body.temperature ?? 0.85, 0, 1.5);
-  const maxTokens = clamp(body.maxTokens ?? 80, 1, 512);
+  const temperature = clamp(body.temperature ?? 0.92, 0, 1.5);
+  const maxTokens = clamp(body.maxTokens ?? 110, 1, 512);
+  const frequencyPenalty = clamp(body.frequencyPenalty ?? 0.5, -2, 2);
+  const presencePenalty = clamp(body.presencePenalty ?? 0.3, -2, 2);
 
   let stream: AsyncIterable<{
     choices: Array<{ delta?: { content?: string | null } }>;
@@ -65,6 +65,8 @@ export async function POST(request: Request) {
       messages,
       temperature,
       max_tokens: maxTokens,
+      frequency_penalty: frequencyPenalty,
+      presence_penalty: presencePenalty,
       stream: true,
     })) as unknown as AsyncIterable<{
       choices: Array<{ delta?: { content?: string | null } }>;

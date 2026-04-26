@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
+// Pin token mint to US-West, closest to AZURE_SPEECH_REGION=westus2.
+// This only fires once per session so it's not the hot path, but it
+// shaves ~150ms off the initial "tap to talk" tap.
+// (If you move Azure to westeurope, switch this to ["fra1"].)
+export const preferredRegion = ["pdx1"];
 
 /**
  * Mints a short-lived (10 min) Azure Speech token for the browser.

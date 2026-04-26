@@ -182,6 +182,11 @@ export class AzureTTSClient implements TTSClient {
 
     const config = await buildSpeechConfig();
     config.speechSynthesisVoiceName = this.voice.voiceName;
+    // Lower-bitrate MP3 = faster first-audio-byte over the wire.
+    // 24 kHz mono at 48kbps is plenty for "phone call" voice quality and
+    // shaves measurable ms off Azure → browser delivery vs the SDK default.
+    config.speechSynthesisOutputFormat =
+      Speech.SpeechSynthesisOutputFormat.Audio24Khz48KBitRateMonoMp3;
 
     // Custom speaker destination so we can hook the *playback-finished*
     // event (`onAudioEnd`), not just synthesis-finished. This is the
