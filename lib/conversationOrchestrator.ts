@@ -60,6 +60,11 @@ export interface UseRizzyConversationReturn {
 // snappy. 12 turns ≈ 24 messages.
 const MAX_HISTORY_TURNS = 12;
 
+// Auto-end the session if the user is silent for this long while in the
+// "listening" state. Protects against the "tab left open" billing trap.
+// Reset on any voice activity (speech start, partial transcripts).
+const IDLE_TIMEOUT_MS = 60_000;
+
 function uid(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -87,6 +92,7 @@ export function useRizzyConversation(
   const inFlightAbortRef = useRef<AbortController | null>(null);
   const wantsActiveRef = useRef<boolean>(false);
   const fallbackRef = useRef<boolean>(false);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep personality ref synced; voice updates apply to the active TTS client.
   useEffect(() => {
@@ -99,6 +105,36 @@ export function useRizzyConversation(
   const setStatusSafe = useCallback((s: RizzyStatus) => {
     setStatus(s);
   }, []);
+
+  // Idle watchdog: if the user opens a session, taps "Talk to Rizzy", and
+  // then walks away, we don't want the mic + Azure billing meter to keep
+  // ticking forever. We arm a timer whenever we enter "listening" and
+  // reset it on any voice activity (speech start, partial transcripts).
+  const clearIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+  }, []);
+
+  const armIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => {
+      idleTimerRef.current = null;
+      // Mirror what stop() does, but with a friendly nudge so the user
+      // knows the session ended on purpose, not because of a bug.
+      wantsActiveRef.current = false;
+      inFlightAbortRef.current?.abort();
+      inFlightAbortRef.current = null;
+      sttRef.current?.stop().catch(() => {});
+      ttsRef.current?.cancel().catch(() => {});
+      setPartialUserText("");
+      setStatusSafe("idle");
+      setError(
+        "Session ended — no activity for a minute. Tap Talk to Rizzy to keep going.",
+      );
+    }, IDLE_TIMEOUT_MS);
+  }, [setStatusSafe]);
 
   const ensureClients = useCallback(async () => {
     // Pick STT
@@ -354,11 +390,21 @@ export function useRizzyConversation(
     const timer = new TurnTimer();
     turnTimerRef.current = timer;
 
+    // Start the idle watchdog. Any voice activity below resets it.
+    armIdleTimer();
+
     await stt.start({
-      onSpeechStart: () => timer.mark("speechStartedAt"),
+      onSpeechStart: () => {
+        timer.mark("speechStartedAt");
+        armIdleTimer();
+      },
       onSpeechEnd: () => timer.mark("speechEndedAt"),
-      onPartial: (text) => setPartialUserText(text),
+      onPartial: (text) => {
+        setPartialUserText(text);
+        armIdleTimer();
+      },
       onFinal: async (text) => {
+        clearIdleTimer();
         timer.mark("transcriptReceivedAt");
         if (!timer.finalize().speechEndedAt) {
           // Some recognizers don't emit speechEndDetected — backfill.
@@ -369,11 +415,12 @@ export function useRizzyConversation(
         await runTurn(text, timer);
       },
       onError: (err) => {
+        clearIdleTimer();
         setError(err.message);
         setStatusSafe("error_retry");
       },
     });
-  }, [runTurn, setStatusSafe]);
+  }, [runTurn, setStatusSafe, armIdleTimer, clearIdleTimer]);
 
   /* ----------------- public API ----------------- */
 
@@ -405,6 +452,7 @@ export function useRizzyConversation(
 
   const stop = useCallback(async () => {
     wantsActiveRef.current = false;
+    clearIdleTimer();
     inFlightAbortRef.current?.abort();
     inFlightAbortRef.current = null;
     try {
@@ -415,7 +463,7 @@ export function useRizzyConversation(
     }
     setStatusSafe("idle");
     setPartialUserText("");
-  }, [setStatusSafe]);
+  }, [setStatusSafe, clearIdleTimer]);
 
   const sendText = useCallback(
     async (text: string) => {
@@ -437,14 +485,17 @@ export function useRizzyConversation(
 
   const switchToTextFallback = useCallback(() => {
     wantsActiveRef.current = false;
+    clearIdleTimer();
     sttRef.current?.stop().catch(() => {});
     setStatusSafe("fallback_text");
-  }, [setStatusSafe]);
+  }, [setStatusSafe, clearIdleTimer]);
 
   /* ----------------- lifecycle cleanup ----------------- */
 
   useEffect(() => {
     return () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
       sttRef.current?.dispose().catch(() => {});
       ttsRef.current?.dispose().catch(() => {});
       inFlightAbortRef.current?.abort();
