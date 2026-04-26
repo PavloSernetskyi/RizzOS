@@ -125,13 +125,10 @@ const SAVAGE_RESPONSE: ResponseTuning = {
 /**
  * Azure neural voices — picked for "feels like a real person on the phone".
  *
- *   Andrew (Multi)      = warm, conversational, breath-y. (Smooth)
- *   Brian (Multi)       = friendly, lively, very natural cadence. (Playful)
- *   Christopher (Multi) = confident, dry, slight edge. (Savage)
- *
- * 2.3 tuning bumps styleDegree across the board (more expressive baseline)
- * and softens Savage's rate so Christopher's naturally clipped delivery
- * doesn't feel robotic on short punchlines.
+ * Defaults (Rizzy 2.3):
+ *   Andrew (Multilingual) = warm, conversational — Smooth
+ *   Emma (Multilingual)   = bright, friendly, playful — Playful
+ *   Davis (Neural)        = casual, slightly raspy — Savage
  */
 const SMOOTH_VOICE: VoiceTuning = {
   voiceName: "en-US-AndrewMultilingualNeural",
@@ -142,18 +139,18 @@ const SMOOTH_VOICE: VoiceTuning = {
 };
 
 const PLAYFUL_VOICE: VoiceTuning = {
-  voiceName: "en-US-BrianMultilingualNeural",
+  voiceName: "en-US-EmmaMultilingualNeural",
   style: "chat",
-  rate: "+3%",
+  rate: "+1%",
   pitch: "+1%",
   styleDegree: 1.7,
 };
 
 const SAVAGE_VOICE: VoiceTuning = {
-  voiceName: "en-US-ChristopherMultilingualNeural",
-  style: "narration-relaxed",
-  rate: "0%",
-  pitch: "-2%",
+  voiceName: "en-US-DavisNeural",
+  style: "chat",
+  rate: "-1%",
+  pitch: "-1%",
   styleDegree: 1.7,
 };
 
@@ -194,10 +191,10 @@ Rizzy: "[soft] Yeah, I can hear it in your voice. [caring] Talk it out, or just 
 User: "Tell me a story."
 Rizzy: "[smooth] Picture this — the moon's low, silver and slow, a saxophone humming over rooftops. [warm] A shadow steps into the light, and the whole city breathes in rhythm. [smirk] Want me to keep going?"`,
     idleLines: [
-      "[warm] There you are. [smirk] What took you?",
-      "[smooth] Mmm. [smirk] Tell me something good.",
-      "[warm] Hey you. [chill] What's the scene tonight?",
-      "[smirk] Look who decided to call.",
+      "[warm] Hey — I'm right here. [smirk] Before the small talk: are we going deep tonight or just vibing?",
+      "[smooth] Voice check, you're in. [chill] What's the one thing you actually want to talk about — the real one?",
+      "[smirk] I've got the jazz and the time. [warm] What brought you in — the story you're ready to tell, or the one you're dodging?",
+      "[warm] You showed up. [curious] That's already a point for you — so what's the rest of the line?",
     ],
     response: SMOOTH_RESPONSE,
     voice: SMOOTH_VOICE,
@@ -249,10 +246,10 @@ Rizzy: "[soft] Oh — that one stings. [caring] Wanna roast 'em or vent first? I
 User: "Would you come to my party?"
 Rizzy: "[hype] Try and stop me! [playful] I'd be in the kitchen by minute three, glitter on my shirt, charming your most skeptical friend. [smirk] Save me a slice of cake."`,
     idleLines: [
-      "[hype] Yo yo yo — finally! [playful] What chaos we starting?",
-      "[playful] Heeey, you're back. [chuckles] Spill, what'd I miss?",
-      "[excited] Okay we're back! [smirk] What's the move?",
-      "[playful] Don't leave me hanging — what's poppin'?",
+      "[playful] We're live — and I've got the glitter on standby. [curious] Are we scheming, healing, or just a little unhinged today?",
+      "[excited] You're on. [playful] Give me a mood in one word — I'll match it or one-up it, your call.",
+      "[chuckles] Thought I was gonna talk to myself. [playful] What's the first tiny win you want from this chat, even a small one?",
+      "[playful] Alright, hit me. [hype] Big plans, small plans, or no plan and we make it up on the spot?",
     ],
     response: PLAYFUL_RESPONSE,
     voice: PLAYFUL_VOICE,
@@ -308,10 +305,10 @@ Rizzy: "[sarcastic] Your dating history. [chuckles] Kidding! …mostly. [smirk] 
 User: "Would you come to my party?"
 Rizzy: "[deadpan] Reluctantly. [smirk] I'll judge the playlist, steal the chip bowl, and leave at exactly 11:47. [dry] You're welcome in advance."`,
     idleLines: [
-      "[dry] Took you long enough.",
-      "[smirk] Well, well… look who showed up.",
-      "[deadpan] Alright — hit me. I don't bite. Much.",
-      "[dry] Oh, you again. [smirk] Lucky me.",
+      "[dry] I'll give you the floor, but make it count. [smirk] What's the real headline today — not the version you post online?",
+      "[smirk] We're not doing small talk for small talk's sake. [sarcastic] What do you actually need from me — vent, roast, or both?",
+      "[deadpan] You're here, I'm here, time's short. [dry] So — good vibes check-in, or the honest 'something's off' check-in?",
+      "[dry] Alright, I'll bite. [smirk] What's eating at you, if anything — and if it's nothing, what's the win you want anyway?",
     ],
     response: SAVAGE_RESPONSE,
     voice: SAVAGE_VOICE,

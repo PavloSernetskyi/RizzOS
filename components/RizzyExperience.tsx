@@ -14,7 +14,12 @@ import type { Message } from "@/types/conversation";
 import type { LatencyTurn } from "@/types/latency";
 import type { PersonalityKey, VoiceTuning } from "@/types/personality";
 
-const SHOW_VOICE_LAB = process.env.NEXT_PUBLIC_RIZZ_DEBUG === "1";
+// Voice Lab is dev-only: never ship to Vercel (prod or preview) even if
+// NEXT_PUBLIC_RIZZ_DEBUG is set there — we require both local `next dev` and
+// the debug flag from `.env.local`.
+const SHOW_VOICE_LAB =
+  process.env.NODE_ENV === "development" &&
+  process.env.NEXT_PUBLIC_RIZZ_DEBUG === "1";
 
 const EMPTY_OVERRIDES: Record<PersonalityKey, VoiceTuning | null> = {
   smooth: null,

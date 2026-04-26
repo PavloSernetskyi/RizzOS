@@ -28,8 +28,10 @@ interface VoiceLabProps {
  * the session. They reset on page reload (we don't persist deliberately
  * — this is a tuning tool, not a user preference).
  *
- * Hidden unless NEXT_PUBLIC_RIZZ_DEBUG === "1". Gating in the render path
- * keeps it out of production bundles when the flag is off.
+ * Gated in RizzyExperience: only when NODE_ENV === "development" AND
+ * NEXT_PUBLIC_RIZZ_DEBUG === "1" (e.g. from `.env.local` during `next dev`).
+ * Never shown on Vercel builds — production and preview are always
+ * `NODE_ENV === "production"`.
  */
 export function VoiceLab({
   activePersonality,

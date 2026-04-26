@@ -49,7 +49,7 @@ const MALE: VoiceOption[] = [
   {
     id: "brian-multi",
     label: "Brian",
-    blurb: "Friendly, lively, very natural cadence. (Playful default)",
+    blurb: "Friendly, lively, very natural cadence.",
     gender: "male",
     tuning: {
       voiceName: "en-US-BrianMultilingualNeural",
@@ -63,7 +63,7 @@ const MALE: VoiceOption[] = [
   {
     id: "christopher-multi",
     label: "Christopher",
-    blurb: "Confident, dry, slight edge. (Savage default)",
+    blurb: "Confident, dry, slight edge.",
     gender: "male",
     tuning: {
       voiceName: "en-US-ChristopherMultilingualNeural",
@@ -91,14 +91,14 @@ const MALE: VoiceOption[] = [
   {
     id: "davis",
     label: "Davis",
-    blurb: "Casual, expressive, slightly raspy.",
+    blurb: "Casual, expressive, slightly raspy. (Savage default)",
     gender: "male",
     tuning: {
       voiceName: "en-US-DavisNeural",
       style: "chat",
       rate: "-1%",
       pitch: "-1%",
-      styleDegree: 1.6,
+      styleDegree: 1.7,
     },
     sample: "[chill] Yeah, I see you. [smirk] What's the story tonight?",
   },
@@ -138,7 +138,7 @@ const FEMALE: VoiceOption[] = [
   {
     id: "emma-multi",
     label: "Emma",
-    blurb: "Bright, friendly, slightly playful.",
+    blurb: "Bright, friendly, slightly playful. (Playful default)",
     gender: "female",
     tuning: {
       voiceName: "en-US-EmmaMultilingualNeural",
