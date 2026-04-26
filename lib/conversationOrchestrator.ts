@@ -136,6 +136,34 @@ export function useRizzyConversation(
     }, IDLE_TIMEOUT_MS);
   }, [setStatusSafe]);
 
+  // Mobile browsers (especially iOS Safari) require getUserMedia() to be
+  // called *synchronously* inside a user gesture, BEFORE any awaits. Our
+  // Azure SDK eventually calls getUserMedia internally, but only AFTER we
+  // fetch a token + speak the greeting — by then the user gesture has
+  // expired and iOS silently denies the prompt.
+  //
+  // Fix: as the very first thing inside the click handler we ask for mic
+  // permission ourselves, then immediately release the tracks. Once the
+  // browser has granted access for this page session, Azure can re-acquire
+  // the mic later without re-prompting.
+  //
+  // IMPORTANT: this MUST be the first awaited call in start() — anything
+  // before it (synchronous or not) is fine, but no async work in between.
+  const preflightMic = useCallback(async () => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
+      // No mediaDevices API — old browser. Let downstream STT handle it
+      // (Azure SDK will throw a clearer error, browser fallback won't work).
+      return;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // We just needed the prompt to fire; release the tracks immediately so
+    // Azure's recognizer gets a clean handle later.
+    stream.getTracks().forEach((t) => t.stop());
+  }, []);
+
   const ensureClients = useCallback(async () => {
     // Pick STT
     if (!sttRef.current) {
@@ -428,6 +456,32 @@ export function useRizzyConversation(
     setError(null);
     wantsActiveRef.current = true;
     fallbackRef.current = false;
+
+    // Step 1: request mic permission FIRST, while the user gesture is still
+    // alive. Mobile browsers (esp. iOS Safari) won't show the prompt if we
+    // call getUserMedia later in the chain (after token fetch + greeting).
+    try {
+      await preflightMic();
+    } catch (err) {
+      const denied =
+        err instanceof Error &&
+        (err.name === "NotAllowedError" ||
+          err.name === "PermissionDeniedError" ||
+          /denied|permission/i.test(err.message));
+      if (denied) {
+        setError(
+          "Microphone permission was denied. To talk to Rizzy, allow mic access in your browser settings and tap Talk to Rizzy again. (You can also use the text input below.)",
+        );
+      } else {
+        setError(
+          "Couldn't access your microphone. Make sure no other app is using it, then try again.",
+        );
+      }
+      setStatusSafe("error_retry");
+      wantsActiveRef.current = false;
+      return;
+    }
+
     try {
       await ensureClients();
       // Rizzy greets first, then opens the mic. If the user taps End mid-
@@ -448,7 +502,13 @@ export function useRizzyConversation(
         setStatusSafe("error_retry");
       }
     }
-  }, [ensureClients, speakGreetingInternal, startListeningInternal, setStatusSafe]);
+  }, [
+    preflightMic,
+    ensureClients,
+    speakGreetingInternal,
+    startListeningInternal,
+    setStatusSafe,
+  ]);
 
   const stop = useCallback(async () => {
     wantsActiveRef.current = false;
