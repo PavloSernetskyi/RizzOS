@@ -240,11 +240,13 @@ export class AzureTTSClient implements TTSClient {
           if (
             result.reason !== Speech.ResultReason.SynthesizingAudioCompleted
           ) {
+            // No audio will play (e.g. invalid voice name, expired token).
+            // Surface the error to the orchestrator NOW so it can fall back
+            // to browser TTS — onAudioEnd will never fire in this branch.
             synthesisError = new Error(
               `Azure TTS failed: ${result.errorDetails ?? "unknown"}`,
             );
-            // No audio will play; resolve immediately rather than wait
-            // for onAudioEnd that won't come.
+            opts.onError?.(synthesisError);
             finish();
             return;
           }

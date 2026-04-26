@@ -90,7 +90,7 @@ const SAVAGE_RESPONSE: ResponseTuning = {
 /**
  * Azure neural voices — picked for "feels like a real person on the phone".
  *
- *   Andrew2 (V2)        = warm, conversational, breath-y. HD upgrade of Andrew. (Smooth)
+ *   Andrew (Multi)      = warm, conversational, breath-y. (Smooth)
  *   Brian (Multi)       = friendly, lively, very natural cadence. (Playful)
  *   Christopher (Multi) = confident, dry, slight edge. (Savage)
  *
@@ -101,7 +101,7 @@ const SAVAGE_RESPONSE: ResponseTuning = {
  * style/styleDegree for that one beat.
  */
 const SMOOTH_VOICE: VoiceTuning = {
-  voiceName: "en-US-Andrew2MultilingualNeural",
+  voiceName: "en-US-AndrewMultilingualNeural",
   style: "chat",
   rate: "-3%",
   pitch: "-1%",
