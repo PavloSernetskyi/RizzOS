@@ -35,58 +35,81 @@ export interface ExpressionOverride {
  * voice supports every style, but Azure gracefully falls back to default
  * delivery when an unsupported style is requested — so this is safe.
  */
+/**
+ * 2.3 baseline notes:
+ *   - styleDegree was bumped across the board ("more expressive default").
+ *     Azure's neural voices are conservative at 1.0 — we push past it.
+ *   - Stage-direction cues ([slow], [softly], [energetic]) now actually
+ *     adjust prosody rate/pitch instead of just labelling a mood.
+ *   - [laughs] / [chuckles] aren't true laugh sounds (Azure's Multilingual
+ *     voices don't support `laughing` style) — but we lean cheerful HARD
+ *     with a pitch + rate boost so it reads as audibly amused breath
+ *     rather than a flat sentence.
+ */
 const CUE_MAP: Record<string, ExpressionOverride> = {
   // warm / intimate
-  warm: { style: "friendly", styleDegree: 1.5 },
-  warmly: { style: "friendly", styleDegree: 1.5 },
-  soft: { style: "friendly", styleDegree: 1.3, rate: "-6%" },
-  gentle: { style: "empathetic", styleDegree: 1.3 },
-  caring: { style: "empathetic", styleDegree: 1.4 },
-  empathetic: { style: "empathetic", styleDegree: 1.4 },
+  warm: { style: "friendly", styleDegree: 1.7 },
+  warmly: { style: "friendly", styleDegree: 1.7 },
+  soft: { style: "friendly", styleDegree: 1.5, rate: "-8%", pitch: "-1%" },
+  softly: { style: "friendly", styleDegree: 1.5, rate: "-8%", pitch: "-1%" },
+  tender: { style: "friendly", styleDegree: 1.7, rate: "-6%" },
+  gentle: { style: "empathetic", styleDegree: 1.5, rate: "-4%" },
+  caring: { style: "empathetic", styleDegree: 1.7 },
+  empathetic: { style: "empathetic", styleDegree: 1.7 },
 
   // smooth / flirty
-  smirk: { style: "chat", styleDegree: 1.6, rate: "-2%" },
-  smirking: { style: "chat", styleDegree: 1.6, rate: "-2%" },
-  smooth: { style: "chat", styleDegree: 1.3, rate: "-3%" },
-  flirty: { style: "chat", styleDegree: 1.6, pitch: "-1%" },
-  flirting: { style: "chat", styleDegree: 1.6, pitch: "-1%" },
-  chill: { style: "chat", styleDegree: 1.0 },
-  cool: { style: "chat", styleDegree: 1.1 },
+  smirk: { style: "chat", styleDegree: 1.8, rate: "-2%" },
+  smirking: { style: "chat", styleDegree: 1.8, rate: "-2%" },
+  smooth: { style: "chat", styleDegree: 1.6, rate: "-4%", pitch: "-1%" },
+  flirty: { style: "chat", styleDegree: 1.9, pitch: "-2%", rate: "-2%" },
+  flirting: { style: "chat", styleDegree: 1.9, pitch: "-2%", rate: "-2%" },
+  chill: { style: "chat", styleDegree: 1.3, rate: "-2%" },
+  cool: { style: "chat", styleDegree: 1.3 },
 
-  // bright / playful
-  laugh: { style: "cheerful", styleDegree: 1.7 },
-  laughs: { style: "cheerful", styleDegree: 1.7 },
-  laughing: { style: "cheerful", styleDegree: 1.7 },
-  chuckle: { style: "cheerful", styleDegree: 1.4 },
-  chuckles: { style: "cheerful", styleDegree: 1.4 },
-  amused: { style: "cheerful", styleDegree: 1.3 },
-  playful: { style: "cheerful", styleDegree: 1.5, rate: "+3%" },
-  playfully: { style: "cheerful", styleDegree: 1.5, rate: "+3%" },
+  // bright / playful — laughs lean cheerful HARD + pitch up so they read amused
+  laugh: { style: "cheerful", styleDegree: 2.0, rate: "+5%", pitch: "+4%" },
+  laughs: { style: "cheerful", styleDegree: 2.0, rate: "+5%", pitch: "+4%" },
+  laughing: { style: "cheerful", styleDegree: 2.0, rate: "+5%", pitch: "+4%" },
+  chuckle: { style: "cheerful", styleDegree: 1.7, rate: "+2%", pitch: "+2%" },
+  chuckles: { style: "cheerful", styleDegree: 1.7, rate: "+2%", pitch: "+2%" },
+  amused: { style: "cheerful", styleDegree: 1.5, pitch: "+1%" },
+  happy: { style: "cheerful", styleDegree: 1.7, pitch: "+2%" },
+  playful: { style: "cheerful", styleDegree: 1.8, rate: "+3%", pitch: "+1%" },
+  playfully: { style: "cheerful", styleDegree: 1.8, rate: "+3%", pitch: "+1%" },
 
-  // hyped / excited
-  hype: { style: "excited", styleDegree: 1.7, rate: "+4%" },
-  hyped: { style: "excited", styleDegree: 1.7, rate: "+4%" },
-  excited: { style: "excited", styleDegree: 1.6, rate: "+3%" },
-  excitedly: { style: "excited", styleDegree: 1.6, rate: "+3%" },
-  enthusiastic: { style: "excited", styleDegree: 1.6 },
-  enthusiastically: { style: "excited", styleDegree: 1.6 },
+  // hyped / excited / energetic
+  hype: { style: "excited", styleDegree: 2.0, rate: "+5%", pitch: "+2%" },
+  hyped: { style: "excited", styleDegree: 2.0, rate: "+5%", pitch: "+2%" },
+  excited: { style: "excited", styleDegree: 1.8, rate: "+4%", pitch: "+1%" },
+  excitedly: { style: "excited", styleDegree: 1.8, rate: "+4%", pitch: "+1%" },
+  enthusiastic: { style: "excited", styleDegree: 1.8, rate: "+3%" },
+  enthusiastically: { style: "excited", styleDegree: 1.8, rate: "+3%" },
+  energetic: { style: "excited", styleDegree: 1.8, rate: "+5%", pitch: "+2%" },
 
   // confident / cocky
-  confident: { style: "chat", styleDegree: 1.4 },
-  confidently: { style: "chat", styleDegree: 1.4 },
-  cocky: { style: "chat", styleDegree: 1.5, rate: "-1%" },
+  confident: { style: "chat", styleDegree: 1.6 },
+  confidently: { style: "chat", styleDegree: 1.6 },
+  cocky: { style: "chat", styleDegree: 1.7, rate: "-1%" },
 
-  // dry / sharp
-  dry: { style: "chat", styleDegree: 0.8 },
-  deadpan: { style: "chat", styleDegree: 0.6 },
-  sharp: { style: "chat", styleDegree: 1.0, rate: "+5%" },
-  sarcastic: { style: "chat", styleDegree: 1.2, rate: "-2%" },
+  // dry / sharp / mocking — savage's home turf
+  dry: { style: "chat", styleDegree: 0.9, rate: "-1%" },
+  deadpan: { style: "chat", styleDegree: 0.5, rate: "-3%" },
+  sharp: { style: "chat", styleDegree: 1.2, rate: "+5%" },
+  sarcastic: { style: "chat", styleDegree: 1.5, rate: "-2%", pitch: "-1%" },
+  mock: { style: "chat", styleDegree: 1.6, rate: "-2%", pitch: "+2%" },
+  mocking: { style: "chat", styleDegree: 1.6, rate: "-2%", pitch: "+2%" },
 
-  // curious / thoughtful
-  curious: { style: "chat", styleDegree: 1.3 },
-  thoughtful: { style: "chat", styleDegree: 1.0, rate: "-3%" },
-  whisper: { style: "whispering", styleDegree: 1.3, rate: "-5%" },
-  whispering: { style: "whispering", styleDegree: 1.3, rate: "-5%" },
+  // curious / thoughtful / hushed
+  curious: { style: "chat", styleDegree: 1.4, pitch: "+1%" },
+  thoughtful: { style: "chat", styleDegree: 1.1, rate: "-4%" },
+  whisper: { style: "whispering", styleDegree: 1.5, rate: "-6%" },
+  whispering: { style: "whispering", styleDegree: 1.5, rate: "-6%" },
+
+  // pure stage-direction cues (no mood, just prosody)
+  slow: { styleDegree: 1.2, rate: "-12%" },
+  slowly: { styleDegree: 1.2, rate: "-12%" },
+  fast: { styleDegree: 1.4, rate: "+10%" },
+  quick: { styleDegree: 1.4, rate: "+10%" },
 };
 
 const CUE_REGEX = /^\s*\[([^\]\n]{1,30})\]\s*/;

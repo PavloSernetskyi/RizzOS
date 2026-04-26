@@ -182,6 +182,11 @@ export class AzureTTSClient implements TTSClient {
 
     const config = await buildSpeechConfig();
     config.speechSynthesisVoiceName = this.voice.voiceName;
+    // Lower-bitrate MP3 = faster first-audio-byte over the wire.
+    // 24 kHz mono at 48kbps is plenty for "phone call" voice quality and
+    // shaves measurable ms off Azure → browser delivery vs the SDK default.
+    config.speechSynthesisOutputFormat =
+      Speech.SpeechSynthesisOutputFormat.Audio24Khz48KBitRateMonoMp3;
 
     // Custom speaker destination so we can hook the *playback-finished*
     // event (`onAudioEnd`), not just synthesis-finished. This is the
@@ -340,6 +345,15 @@ function humanizeForSsml(raw: string): string {
 
   // Collapse repeated terminal punctuation: "wait!!" -> "wait!"
   t = t.replace(/([!?.])\1{1,}/g, "$1");
+
+  // Onomatopoeia fixup: bare "Mm." / "Hm." get parsed as the letter
+  // sequence M-M / H-M ("em em") by Azure's neural voices. Stretching
+  // them to "Mmm" / "Hmm" makes the engine treat them as words and
+  // produces an actual humming sound. Same for "Uh" / "Eh".
+  t = t.replace(/\b(M)m\b/g, "$1mm");
+  t = t.replace(/\b(m)m\b/g, "$1mm");
+  t = t.replace(/\b(H)m\b/g, "$1mm");
+  t = t.replace(/\b(h)m\b/g, "$1mm");
 
   // Ensure the sentence ends with terminal punctuation so the voice
   // doesn't trail off flat.

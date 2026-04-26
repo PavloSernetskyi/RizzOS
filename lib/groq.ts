@@ -28,6 +28,8 @@ export const groqClient: LLMClient = {
           messages,
           temperature: opts.temperature,
           maxTokens: opts.maxTokens,
+          frequencyPenalty: opts.frequencyPenalty,
+          presencePenalty: opts.presencePenalty,
         }),
         signal: opts.signal,
       });
