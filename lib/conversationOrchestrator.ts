@@ -10,6 +10,7 @@ import {
 } from "@/lib/fallback";
 import { groqClient, SentenceStreamer } from "@/lib/groq";
 import { TurnTimer } from "@/lib/latency";
+import { parseLeadingCue, type ExpressionOverride } from "@/lib/expression";
 import type { Message, RizzyStatus } from "@/types/conversation";
 import type { LatencyTurn } from "@/types/latency";
 import type { Personality } from "@/types/personality";
@@ -166,14 +167,30 @@ export function useRizzyConversation(
       const abort = new AbortController();
       inFlightAbortRef.current = abort;
 
-      const enqueueSentence = (sentence: string) => {
+      // Active emotion cue carries across sentences within a single turn —
+      // so "[warm] Hey there. How's your day?" speaks BOTH sentences warm
+      // even though only the first carries the explicit cue.
+      let activeExpression: ExpressionOverride | undefined;
+
+      const enqueueSentence = (rawSentence: string) => {
         const tts = ttsRef.current;
         if (!tts) return;
         if (timer.finalize().ttsRequestedAt === undefined) {
           timer.mark("ttsRequestedAt");
         }
+
+        // Strip a leading "[cue]" off the spoken text, but only for TTS —
+        // the transcript still shows it so the user reads Rizzy's mood.
+        const parsed = parseLeadingCue(rawSentence);
+        if (parsed.expression) activeExpression = parsed.expression;
+        const spoken = parsed.cleanText.trim();
+        if (!spoken) return;
+
+        const expression = activeExpression;
+
         ttsQueueTail = ttsQueueTail.then(() =>
-          tts.speak(sentence, {
+          tts.speak(spoken, {
+            expression,
             onFirstAudio: () => {
               timer.mark("firstAudioAt");
               setStatusSafe("speaking");
@@ -183,7 +200,7 @@ export function useRizzyConversation(
               if (!fallbackRef.current && tts === azureTtsRef.current) {
                 fallbackRef.current = true;
                 ttsRef.current = new BrowserTTSClient();
-                ttsRef.current.speak(sentence, {
+                ttsRef.current.speak(spoken, {
                   onFirstAudio: () => {
                     timer.mark("firstAudioAt");
                     setStatusSafe("speaking");
@@ -266,6 +283,58 @@ export function useRizzyConversation(
     [onMessage, onMessageUpdate, onLatency, setStatusSafe],
   );
 
+  /* ----------------- greeting (Rizzy speaks first) ----------------- */
+
+  /**
+   * On `start()`, before opening the mic, Rizzy says a short personality-
+   * specific opener. Doubles as a friendly hello AND as a TTS warm-up so
+   * the *next* turn (the user's first reply) hits with much lower latency.
+   */
+  const speakGreetingInternal = useCallback(async () => {
+    const tts = ttsRef.current;
+    const personalityNow = personalityRef.current;
+    const lines = personalityNow.idleLines;
+    if (!tts || !lines.length) return;
+
+    const greeting = lines[Math.floor(Math.random() * lines.length)];
+    const id = uid();
+
+    // Authored idleLines may carry a leading "[cue]" — strip for TTS,
+    // keep for transcript so the user reads Rizzy's vibe in the UI.
+    const parsed = parseLeadingCue(greeting);
+    const spoken = parsed.cleanText.trim() || greeting;
+
+    onMessage({
+      id,
+      speaker: "rizzy",
+      text: greeting,
+      createdAt: Date.now(),
+    });
+
+    setStatusSafe("speaking");
+
+    await new Promise<void>((resolve) => {
+      tts.speak(spoken, {
+        expression: parsed.expression,
+        onComplete: () => resolve(),
+        onError: (err) => {
+          // Greeting is best-effort. If Azure TTS fails here, swap to
+          // browser TTS for the rest of the session and keep going.
+          if (!fallbackRef.current && tts === azureTtsRef.current) {
+            fallbackRef.current = true;
+            ttsRef.current = new BrowserTTSClient();
+            ttsRef.current
+              .speak(spoken, { onComplete: () => resolve() })
+              .catch(() => resolve());
+          } else {
+            console.warn("Greeting TTS error (suppressed):", err);
+            resolve();
+          }
+        },
+      });
+    });
+  }, [onMessage, setStatusSafe]);
+
   /* ----------------- listening control ----------------- */
 
   const startListeningInternal = useCallback(async () => {
@@ -305,6 +374,13 @@ export function useRizzyConversation(
     fallbackRef.current = false;
     try {
       await ensureClients();
+      // Rizzy greets first, then opens the mic. If the user taps End mid-
+      // greeting we honor that and don't fall through to listening.
+      await speakGreetingInternal();
+      if (!wantsActiveRef.current) {
+        setStatusSafe("idle");
+        return;
+      }
       await startListeningInternal();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Couldn't start.";
@@ -316,7 +392,7 @@ export function useRizzyConversation(
         setStatusSafe("error_retry");
       }
     }
-  }, [ensureClients, startListeningInternal, setStatusSafe]);
+  }, [ensureClients, speakGreetingInternal, startListeningInternal, setStatusSafe]);
 
   const stop = useCallback(async () => {
     wantsActiveRef.current = false;

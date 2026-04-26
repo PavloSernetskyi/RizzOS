@@ -8,6 +8,7 @@ import type {
   TTSSpeakOptions,
 } from "@/types/provider";
 import type { VoiceTuning } from "@/types/personality";
+import type { ExpressionOverride } from "@/lib/expression";
 
 interface AzureToken {
   token: string;
@@ -186,7 +187,7 @@ export class AzureTTSClient implements TTSClient {
       }
     };
 
-    const ssml = this.buildSsml(sentence);
+    const ssml = this.buildSsml(sentence, opts.expression);
 
     return new Promise<void>((resolve) => {
       synth.speakSsmlAsync(
@@ -238,34 +239,61 @@ export class AzureTTSClient implements TTSClient {
     await this.cancel();
   }
 
-  private buildSsml(text: string): string {
+  private buildSsml(text: string, expr?: ExpressionOverride): string {
     const v = this.voice;
-    const safe = escapeXml(text);
-    const styled = v.style
-      ? `<mstts:express-as style="${v.style}" styledegree="${v.styleDegree ?? 1}">${safe}</mstts:express-as>`
-      : safe;
-    const prosody =
-      v.rate || v.pitch
-        ? `<prosody rate="${v.rate ?? "0%"}" pitch="${v.pitch ?? "0%"}">${styled}</prosody>`
-        : styled;
+    const inner = humanizeForSsml(text);
 
-    return `
-<speak version="1.0"
-       xmlns="http://www.w3.org/2001/10/synthesis"
-       xmlns:mstts="http://www.w3.org/2001/mstts"
-       xml:lang="en-US">
-  <voice name="${v.voiceName}">
-    ${prosody}
-  </voice>
-</speak>`.trim();
+    // Per-utterance cue (from "[warm]", "[smirk]", etc.) overrides the
+    // personality's default style/styleDegree for THIS sentence only. This
+    // is what lets Rizzy shift mood mid-conversation the way ElevenLabs
+    // audio tags do.
+    const style = expr?.style ?? v.style ?? "chat";
+    const styleDeg = expr?.styleDegree ?? v.styleDegree ?? 1.1;
+    const styled = `<mstts:express-as style="${style}" styledegree="${styleDeg}">${inner}</mstts:express-as>`;
+
+    // Small `prosody` envelope so each personality has its own signature
+    // tempo/pitch even when the underlying voice is shared between modes.
+    // Cue can also nudge rate/pitch (e.g. "soft" pulls rate down).
+    const rate = expr?.rate ?? v.rate ?? "-2%";
+    const pitch = expr?.pitch ?? v.pitch ?? "0%";
+    const prosody = `<prosody rate="${rate}" pitch="${pitch}">${styled}</prosody>`;
+
+    return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US"><voice name="${v.voiceName}">${prosody}</voice></speak>`;
   }
 }
 
-function escapeXml(s: string): string {
-  return s
+/**
+ * Pre-process text before XML-escaping so Azure's prosody model has more to
+ * work with. The big wins are:
+ *   - turning "..." / "—" into real `<break>` tags (Azure mostly ignores
+ *     ellipses otherwise, which makes Rizzy sound rushed)
+ *   - softening run-on punctuation ("!!" -> "!") so the voice doesn't shout
+ *   - guaranteeing a sentence-final punctuation so intonation lands
+ */
+function humanizeForSsml(raw: string): string {
+  let t = raw.trim();
+  if (!t) return "";
+
+  // Collapse repeated terminal punctuation: "wait!!" -> "wait!"
+  t = t.replace(/([!?.])\1{1,}/g, "$1");
+
+  // Ensure the sentence ends with terminal punctuation so the voice
+  // doesn't trail off flat.
+  if (!/[.!?…]$/.test(t)) t = `${t}.`;
+
+  // Escape XML entities BEFORE injecting our own break tags.
+  const safe = t
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+
+  // Inject natural micro-pauses. Azure handles commas and periods well,
+  // but ellipses, em-dashes, and " - " are often steamrolled. Give them
+  // explicit breaks so Rizzy breathes.
+  return safe
+    .replace(/\.{3,}|…/g, '<break time="280ms"/>')
+    .replace(/\s—\s|\s--\s|\s-\s/g, '<break time="180ms"/>')
+    .replace(/,\s/g, ', <break time="80ms"/>');
 }
