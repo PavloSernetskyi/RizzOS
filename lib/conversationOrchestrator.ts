@@ -10,7 +10,11 @@ import {
 } from "@/lib/fallback";
 import { groqClient, SentenceStreamer } from "@/lib/groq";
 import { TurnTimer } from "@/lib/latency";
-import { parseLeadingCue, type ExpressionOverride } from "@/lib/expression";
+import {
+  parseLeadingCue,
+  stripAllCues,
+  type ExpressionOverride,
+} from "@/lib/expression";
 import type { Message, RizzyStatus } from "@/types/conversation";
 import type { LatencyTurn } from "@/types/latency";
 import type { Personality } from "@/types/personality";
@@ -51,7 +55,10 @@ export interface UseRizzyConversationReturn {
   switchToTextFallback: () => void;
 }
 
-const MAX_HISTORY_TURNS = 8; // Keep last N exchanges to bound prompt size.
+// Bigger window = better callbacks ("the caramel from earlier"). Llama 3.3
+// has 128k context so this is nowhere near a limit; we just keep prompts
+// snappy. 12 turns ≈ 24 messages.
+const MAX_HISTORY_TURNS = 12;
 
 function uid(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -181,9 +188,11 @@ export function useRizzyConversation(
 
         // Strip a leading "[cue]" off the spoken text, but only for TTS —
         // the transcript still shows it so the user reads Rizzy's mood.
+        // stripAllCues handles any inline cues the model snuck in
+        // mid-sentence so Azure doesn't read them literally.
         const parsed = parseLeadingCue(rawSentence);
         if (parsed.expression) activeExpression = parsed.expression;
-        const spoken = parsed.cleanText.trim();
+        const spoken = stripAllCues(parsed.cleanText);
         if (!spoken) return;
 
         const expression = activeExpression;
@@ -302,7 +311,7 @@ export function useRizzyConversation(
     // Authored idleLines may carry a leading "[cue]" — strip for TTS,
     // keep for transcript so the user reads Rizzy's vibe in the UI.
     const parsed = parseLeadingCue(greeting);
-    const spoken = parsed.cleanText.trim() || greeting;
+    const spoken = stripAllCues(parsed.cleanText) || greeting;
 
     onMessage({
       id,

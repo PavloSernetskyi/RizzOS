@@ -124,3 +124,18 @@ export function parseLeadingCue(text: string): ParsedCue {
 export function isKnownCue(label: string): boolean {
   return Object.prototype.hasOwnProperty.call(CUE_MAP, label.toLowerCase());
 }
+
+/**
+ * Sweep ANY remaining bracketed cues out of a string. Defensive cleanup
+ * for text headed to TTS — the leading cue is already extracted by
+ * parseLeadingCue, but if the model writes mid-sentence cues like
+ * "[Warmly] doing great [Smirking] you?" we don't want Azure literally
+ * pronouncing "smirking" or "warmly" inside the speech.
+ *
+ * This does NOT touch the transcript shown to the user; UI components
+ * keep cues visible so the user reads Rizzy's mood shifts.
+ */
+const ANY_CUE_REGEX = /\[[^\]\n]{1,30}\]/g;
+export function stripAllCues(text: string): string {
+  return text.replace(ANY_CUE_REGEX, "").replace(/\s{2,}/g, " ").trim();
+}
