@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AzureSTTClient, AzureTTSClient } from "@/lib/azure";
+import { AzureSTTClient, AzureTTSClient, preloadAzureToken } from "@/lib/azure";
 import {
   BrowserSTTClient,
   BrowserTTSClient,
@@ -9,6 +9,7 @@ import {
   browserSupportsTTS,
 } from "@/lib/fallback";
 import { groqClient, SentenceStreamer } from "@/lib/groq";
+import { playGreetingAudio, stopGreetingAudio } from "@/lib/greetingAudio";
 import { TurnTimer } from "@/lib/latency";
 import {
   parseLeadingCue,
@@ -170,17 +171,10 @@ export function useRizzyConversation(
     // Pick STT
     if (!sttRef.current) {
       try {
-        // Probe Azure token first; if it fails, fall back immediately.
-        const probe = await fetch("/api/azure/token", { method: "GET" });
-        if (probe.ok) {
-          sttRef.current = new AzureSTTClient();
-        } else if (browserSupportsSTT()) {
-          sttRef.current = new BrowserSTTClient();
-        } else {
-          throw new Error(
-            "No working speech recognizer (Azure unavailable, browser not supported).",
-          );
-        }
+        // Warm the shared Azure token cache. First TTS/STT use reuses it
+        // instead of doing a second token request after this probe.
+        await preloadAzureToken();
+        sttRef.current = new AzureSTTClient();
       } catch (err) {
         if (browserSupportsSTT()) {
           sttRef.current = new BrowserSTTClient();
@@ -364,16 +358,18 @@ export function useRizzyConversation(
 
   /**
    * On `start()`, before opening the mic, Rizzy says a short personality-
-   * specific opener. Doubles as a friendly hello AND as a TTS warm-up so
-   * the *next* turn (the user's first reply) hits with much lower latency.
+   * specific opener. Static audio plays first when available; Azure TTS
+   * remains the fallback so the app still works if assets are missing.
    */
-  const speakGreetingInternal = useCallback(async () => {
-    const tts = ttsRef.current;
+  const speakGreetingInternal = useCallback(async (
+    prepareTts?: () => Promise<void>,
+  ) => {
     const personalityNow = personalityRef.current;
     const lines = personalityNow.idleLines;
-    if (!tts || !lines.length) return;
+    if (!lines.length) return;
 
-    const greeting = lines[Math.floor(Math.random() * lines.length)];
+    const greetingIndex = Math.floor(Math.random() * lines.length);
+    const greeting = lines[greetingIndex];
     const id = uid();
 
     // Authored idleLines may carry a leading "[cue]" — strip for TTS,
@@ -389,6 +385,12 @@ export function useRizzyConversation(
     });
 
     setStatusSafe("speaking");
+
+    if (await playGreetingAudio(personalityNow, greetingIndex)) return;
+
+    await prepareTts?.();
+    const tts = ttsRef.current;
+    if (!tts) return;
 
     await new Promise<void>((resolve) => {
       tts.speak(spoken, {
@@ -487,10 +489,12 @@ export function useRizzyConversation(
     }
 
     try {
-      await ensureClients();
+      const clientsReady = ensureClients();
+      clientsReady.catch(() => {});
       // Rizzy greets first, then opens the mic. If the user taps End mid-
       // greeting we honor that and don't fall through to listening.
-      await speakGreetingInternal();
+      await speakGreetingInternal(() => clientsReady);
+      await clientsReady;
       if (!wantsActiveRef.current) {
         setStatusSafe("idle");
         return;
@@ -520,6 +524,7 @@ export function useRizzyConversation(
     inFlightAbortRef.current?.abort();
     inFlightAbortRef.current = null;
     try {
+      stopGreetingAudio();
       await sttRef.current?.stop();
       await ttsRef.current?.cancel();
     } catch {
@@ -560,6 +565,7 @@ export function useRizzyConversation(
     return () => {
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       idleTimerRef.current = null;
+      stopGreetingAudio();
       sttRef.current?.dispose().catch(() => {});
       ttsRef.current?.dispose().catch(() => {});
       inFlightAbortRef.current?.abort();

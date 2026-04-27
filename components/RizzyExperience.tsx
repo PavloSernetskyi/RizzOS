@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Hero } from "@/components/Hero";
 import { LatencyOverlay } from "@/components/LatencyOverlay";
 import { PersonalitySelector } from "@/components/PersonalitySelector";
@@ -8,8 +8,14 @@ import { TalkButton } from "@/components/TalkButton";
 import { TextFallbackInput } from "@/components/TextFallbackInput";
 import { TranscriptPanel } from "@/components/TranscriptPanel";
 import { VoiceLab } from "@/components/VoiceLab";
+import { preloadAzureToken } from "@/lib/azure";
 import { useRizzyConversation } from "@/lib/conversationOrchestrator";
-import { DEFAULT_PERSONALITY, getPersonality } from "@/lib/personalities";
+import { preloadGreetingAudio } from "@/lib/greetingAudio";
+import {
+  DEFAULT_PERSONALITY,
+  PERSONALITY_ORDER,
+  getPersonality,
+} from "@/lib/personalities";
 import type { Message } from "@/types/conversation";
 import type { LatencyTurn } from "@/types/latency";
 import type { PersonalityKey, VoiceTuning } from "@/types/personality";
@@ -38,6 +44,13 @@ export function RizzyExperience() {
   const [voiceOverrides, setVoiceOverrides] = useState<
     Record<PersonalityKey, VoiceTuning | null>
   >(EMPTY_OVERRIDES);
+
+  useEffect(() => {
+    preloadAzureToken().catch(() => {});
+    PERSONALITY_ORDER.forEach((key) =>
+      preloadGreetingAudio(getPersonality(key)),
+    );
+  }, []);
 
   const basePersonality = getPersonality(personalityKey);
 

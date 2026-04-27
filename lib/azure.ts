@@ -44,6 +44,10 @@ async function fetchAzureToken(): Promise<AzureToken> {
   }
 }
 
+export async function preloadAzureToken(): Promise<void> {
+  await fetchAzureToken();
+}
+
 async function buildSpeechConfig(): Promise<Speech.SpeechConfig> {
   const { token, region } = await fetchAzureToken();
   const config = Speech.SpeechConfig.fromAuthorizationToken(token, region);
