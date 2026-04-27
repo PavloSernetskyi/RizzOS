@@ -96,6 +96,7 @@ export function useRizzyConversation(
   const wantsActiveRef = useRef<boolean>(false);
   const fallbackRef = useRef<boolean>(false);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handlingFinalRef = useRef<boolean>(false);
 
   // Keep personality ref synced; voice updates apply to the active TTS client.
   useEffect(() => {
@@ -131,6 +132,7 @@ export function useRizzyConversation(
       inFlightAbortRef.current = null;
       sttRef.current?.stop().catch(() => {});
       ttsRef.current?.cancel().catch(() => {});
+      handlingFinalRef.current = false;
       setPartialUserText("");
       setStatusSafe("idle");
       setError(
@@ -240,8 +242,7 @@ export function useRizzyConversation(
       let activeExpression: ExpressionOverride | undefined;
 
       const enqueueSentence = (rawSentence: string) => {
-        const tts = ttsRef.current;
-        if (!tts) return;
+        if (!ttsRef.current) return;
         if (timer.finalize().ttsRequestedAt === undefined) {
           timer.mark("ttsRequestedAt");
         }
@@ -257,8 +258,13 @@ export function useRizzyConversation(
 
         const expression = activeExpression;
 
-        ttsQueueTail = ttsQueueTail.then(() =>
-          tts.speak(spoken, {
+        ttsQueueTail = ttsQueueTail.then(async () => {
+          const tts = ttsRef.current;
+          if (!tts) return;
+
+          let fallbackSpeech: Promise<void> | null = null;
+
+          await tts.speak(spoken, {
             expression,
             onFirstAudio: () => {
               timer.mark("firstAudioAt");
@@ -269,7 +275,7 @@ export function useRizzyConversation(
               if (!fallbackRef.current && tts === azureTtsRef.current) {
                 fallbackRef.current = true;
                 ttsRef.current = new BrowserTTSClient();
-                ttsRef.current.speak(spoken, {
+                fallbackSpeech = ttsRef.current.speak(spoken, {
                   onFirstAudio: () => {
                     timer.mark("firstAudioAt");
                     setStatusSafe("speaking");
@@ -279,8 +285,10 @@ export function useRizzyConversation(
                 console.warn("TTS error (suppressed):", err);
               }
             },
-          }),
-        );
+          });
+
+          await fallbackSpeech;
+        });
       };
 
       try {
@@ -339,7 +347,7 @@ export function useRizzyConversation(
         onLatency?.(finalized);
 
         // Resume listening for next user turn (if user still wants active).
-        if (wantsActiveRef.current && !fallbackRef.current) {
+        if (wantsActiveRef.current) {
           await startListeningInternal();
         } else if (!wantsActiveRef.current) {
           setStatusSafe("idle");
@@ -419,6 +427,7 @@ export function useRizzyConversation(
   const startListeningInternal = useCallback(async () => {
     const stt = sttRef.current;
     if (!stt) return;
+    handlingFinalRef.current = false;
     setStatusSafe("listening");
 
     const timer = new TurnTimer();
@@ -438,6 +447,8 @@ export function useRizzyConversation(
         armIdleTimer();
       },
       onFinal: async (text) => {
+        if (handlingFinalRef.current) return;
+        handlingFinalRef.current = true;
         clearIdleTimer();
         timer.mark("transcriptReceivedAt");
         if (!timer.finalize().speechEndedAt) {
@@ -445,8 +456,12 @@ export function useRizzyConversation(
           timer.mark("speechEndedAt");
         }
         // Pause mic while Rizzy thinks + speaks (turn-taking).
-        await stt.stop();
-        await runTurn(text, timer);
+        try {
+          await stt.stop();
+          await runTurn(text, timer);
+        } finally {
+          handlingFinalRef.current = false;
+        }
       },
       onError: (err) => {
         clearIdleTimer();
@@ -520,6 +535,7 @@ export function useRizzyConversation(
 
   const stop = useCallback(async () => {
     wantsActiveRef.current = false;
+    handlingFinalRef.current = false;
     clearIdleTimer();
     inFlightAbortRef.current?.abort();
     inFlightAbortRef.current = null;
@@ -554,6 +570,7 @@ export function useRizzyConversation(
 
   const switchToTextFallback = useCallback(() => {
     wantsActiveRef.current = false;
+    handlingFinalRef.current = false;
     clearIdleTimer();
     sttRef.current?.stop().catch(() => {});
     setStatusSafe("fallback_text");
