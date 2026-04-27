@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { stripAllCues } from "@/lib/expression";
 import type { Message } from "@/types/conversation";
+
+const SHOW_EXPRESSION_CUES =
+  process.env.NODE_ENV === "development" &&
+  process.env.NEXT_PUBLIC_RIZZ_DEBUG === "1";
 
 interface TranscriptPanelProps {
   messages: Message[];
@@ -67,7 +72,7 @@ export function TranscriptPanel({ messages, className }: TranscriptPanelProps) {
                       </span>
                     )}
                   </div>
-                  {m.text || (m.pending ? "…" : "")}
+                  {getVisibleMessageText(m)}
                 </div>
               </li>
             ))}
@@ -77,6 +82,16 @@ export function TranscriptPanel({ messages, className }: TranscriptPanelProps) {
       </div>
     </section>
   );
+}
+
+function getVisibleMessageText(message: Message): string {
+  const text = message.text || (message.pending ? "..." : "");
+
+  if (message.speaker !== "rizzy" || SHOW_EXPRESSION_CUES) {
+    return text;
+  }
+
+  return stripAllCues(text);
 }
 
 function EmptyState() {
