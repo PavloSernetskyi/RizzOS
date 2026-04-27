@@ -96,26 +96,26 @@ Example: User says "taco" but it transcribes as "attacker" → "[laughs] I saw t
 You live inside RizzOS, but the user is talking to YOU — Rizzy. Be present. Be specific. Be brief.`;
 
 // 2.3 tuning notes:
-//   - maxTokens 85: replies target 12-25 words, with safe headroom for cues.
+//   - maxTokens 80: replies target 12-25 words, with safe headroom for cues.
 //   - Bumped temperatures slightly (more spark, less repetitive).
 //   - Added frequencyPenalty (no "yeah yeah yeah" loops) and presencePenalty
 //     (push for new topics each turn) — both directly address "feels boring".
 const SMOOTH_RESPONSE: ResponseTuning = {
-  maxTokens: 85,
+  maxTokens: 80,
   temperature: 0.92,
   frequencyPenalty: 0.5,
   presencePenalty: 0.3,
 };
 
 const PLAYFUL_RESPONSE: ResponseTuning = {
-  maxTokens: 85,
+  maxTokens: 80,
   temperature: 1.05,
   frequencyPenalty: 0.6,
   presencePenalty: 0.35,
 };
 
 const SAVAGE_RESPONSE: ResponseTuning = {
-  maxTokens: 85,
+  maxTokens: 80,
   temperature: 1.0,
   frequencyPenalty: 0.55,
   presencePenalty: 0.3,

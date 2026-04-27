@@ -191,6 +191,7 @@ export function useRizzyConversation(
       const azure = new AzureTTSClient(personalityRef.current.voice);
       azureTtsRef.current = azure;
       ttsRef.current = azure;
+      azure.warmUp().catch(() => {});
       // We let the first speak() determine if Azure works — if it errors,
       // we'll swap to browser fallback.
     }
@@ -510,6 +511,7 @@ export function useRizzyConversation(
       // greeting we honor that and don't fall through to listening.
       await speakGreetingInternal(() => clientsReady);
       await clientsReady;
+      azureTtsRef.current?.warmUp().catch(() => {});
       if (!wantsActiveRef.current) {
         setStatusSafe("idle");
         return;

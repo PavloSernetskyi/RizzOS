@@ -16,6 +16,12 @@ interface AzureToken {
   fetchedAt: number;
 }
 
+interface PreparedSynthesizer {
+  synthesizer: Speech.SpeechSynthesizer;
+  destination: Speech.SpeakerAudioDestination;
+  voiceSignature: string;
+}
+
 let cached: AzureToken | null = null;
 let inflight: Promise<AzureToken> | null = null;
 
@@ -152,7 +158,7 @@ export class AzureSTTClient implements STTClient {
 /**
  * Sentence-by-sentence Azure TTS with a serialized queue. The orchestrator
  * pushes sentences as the LLM streams them; this client speaks them in
- * order, fires `onFirstAudio` the moment the first sentence starts.
+ * order, fires `onFirstAudio` when playback actually starts.
  *
  * IMPORTANT — promise resolution timing:
  *   `speakSsmlAsync`'s callback fires when SYNTHESIS completes, which is
@@ -162,13 +168,16 @@ export class AzureSTTClient implements STTClient {
  *   That's why we use `SpeakerAudioDestination` directly and hook its
  *   `onAudioEnd` — that's the real "playback finished" signal.
  *
- * We rebuild the underlying SpeechSynthesizer per call because the SDK's
- * audio destination is one-shot.
+ * We preconnect one synthesizer ahead of time, then rebuild per call after
+ * use because the SDK's audio destination is one-shot.
  */
 export class AzureTTSClient implements TTSClient {
   private voice: VoiceTuning;
   private current: Speech.SpeechSynthesizer | null = null;
   private currentDest: Speech.SpeakerAudioDestination | null = null;
+  private warmed: PreparedSynthesizer | null = null;
+  private warmupInFlight: Promise<void> | null = null;
+  private warmupEpoch = 0;
   private cancelled = false;
   private firstAudioFired = false;
 
@@ -177,37 +186,78 @@ export class AzureTTSClient implements TTSClient {
   }
 
   setVoice(voice: VoiceTuning): void {
+    if (this.voiceSignature() !== this.voiceSignature(voice)) {
+      this.warmupEpoch += 1;
+      this.closePrepared(this.warmed);
+      this.warmed = null;
+    }
     this.voice = voice;
+  }
+
+  async warmUp(): Promise<void> {
+    if (this.warmed || this.warmupInFlight) {
+      await this.warmupInFlight;
+      return;
+    }
+
+    const epoch = this.warmupEpoch;
+    const prepared = await this.createSynthesizer();
+
+    this.warmed = prepared;
+    const warmup = new Promise<void>((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+
+      const connection = Speech.Connection.fromSynthesizer(prepared.synthesizer);
+      connection.connected = () => done();
+      connection.openConnection(
+        () => done(),
+        () => {
+          this.closePrepared(prepared);
+          if (this.warmed === prepared) this.warmed = null;
+          done();
+        },
+      );
+
+      setTimeout(done, 2_000);
+    })
+      .then(() => {
+        if (epoch !== this.warmupEpoch) {
+          this.closePrepared(prepared);
+          if (this.warmed === prepared) this.warmed = null;
+        }
+      })
+      .finally(() => {
+        if (this.warmupInFlight === warmup) this.warmupInFlight = null;
+      });
+
+    this.warmupInFlight = warmup;
+
+    await this.warmupInFlight;
   }
 
   async speak(sentence: string, opts: TTSSpeakOptions = {}): Promise<void> {
     if (!sentence.trim()) return;
     this.cancelled = false;
 
-    const config = await buildSpeechConfig();
-    config.speechSynthesisVoiceName = this.voice.voiceName;
-    // Lower-bitrate MP3 = faster first-audio-byte over the wire.
-    // 24 kHz mono at 48kbps is plenty for "phone call" voice quality and
-    // shaves measurable ms off Azure → browser delivery vs the SDK default.
-    config.speechSynthesisOutputFormat =
-      Speech.SpeechSynthesisOutputFormat.Audio24Khz48KBitRateMonoMp3;
-
-    // Custom speaker destination so we can hook the *playback-finished*
-    // event (`onAudioEnd`), not just synthesis-finished. This is the
-    // single most important detail for clean back-to-back beats.
-    const destination = new Speech.SpeakerAudioDestination();
-    const audio = Speech.AudioConfig.fromSpeakerOutput(destination);
-    const synth = new Speech.SpeechSynthesizer(config, audio);
+    const prepared = await this.takePreparedSynthesizer();
+    const synth = prepared.synthesizer;
+    const destination = prepared.destination;
     this.current = synth;
     this.currentDest = destination;
     this.firstAudioFired = false;
 
-    synth.synthesisStarted = () => {
+    const fireFirstAudio = () => {
       if (!this.firstAudioFired) {
         this.firstAudioFired = true;
         opts.onFirstAudio?.();
       }
     };
+    destination.onAudioStart = fireFirstAudio;
 
     const ssml = this.buildSsml(sentence, opts.expression);
 
@@ -259,6 +309,7 @@ export class AzureTTSClient implements TTSClient {
             finish();
             return;
           }
+          this.warmUp().catch(() => {});
           // Safety net: if onAudioEnd never fires (rare SDK edge case
           // — e.g. AudioContext suspended), resolve based on the actual
           // audio duration plus a 750ms cushion so the queue never wedges.
@@ -290,6 +341,10 @@ export class AzureTTSClient implements TTSClient {
     const dest = this.currentDest;
     this.current = null;
     this.currentDest = null;
+    this.warmupEpoch += 1;
+    const warmed = this.warmed;
+    this.warmed = null;
+    this.closePrepared(warmed);
     if (dest) {
       try {
         // close() stops in-flight playback AND fires `onAudioEnd`, which
@@ -332,6 +387,65 @@ export class AzureTTSClient implements TTSClient {
     const prosody = `<prosody rate="${rate}" pitch="${pitch}">${styled}</prosody>`;
 
     return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US"><voice name="${v.voiceName}">${prosody}</voice></speak>`;
+  }
+
+  private async takePreparedSynthesizer(): Promise<PreparedSynthesizer> {
+    await this.warmupInFlight?.catch(() => {});
+
+    const signature = this.voiceSignature();
+    const prepared = this.warmed;
+    if (prepared && prepared.voiceSignature === signature) {
+      this.warmed = null;
+      return prepared;
+    }
+
+    this.closePrepared(prepared);
+    this.warmed = null;
+    return this.createSynthesizer();
+  }
+
+  private async createSynthesizer(): Promise<PreparedSynthesizer> {
+    const config = await buildSpeechConfig();
+    config.speechSynthesisVoiceName = this.voice.voiceName;
+    // Keep the existing quality setting for this experiment.
+    config.speechSynthesisOutputFormat =
+      Speech.SpeechSynthesisOutputFormat.Audio24Khz48KBitRateMonoMp3;
+
+    // Custom speaker destination so we can hook the *playback-finished*
+    // event (`onAudioEnd`), not just synthesis-finished.
+    const destination = new Speech.SpeakerAudioDestination();
+    const audio = Speech.AudioConfig.fromSpeakerOutput(destination);
+    const synthesizer = new Speech.SpeechSynthesizer(config, audio);
+
+    return {
+      synthesizer,
+      destination,
+      voiceSignature: this.voiceSignature(),
+    };
+  }
+
+  private closePrepared(prepared: PreparedSynthesizer | null): void {
+    if (!prepared) return;
+    try {
+      prepared.destination.close();
+    } catch {
+      /* swallow */
+    }
+    try {
+      prepared.synthesizer.close();
+    } catch {
+      /* swallow */
+    }
+  }
+
+  private voiceSignature(voice: VoiceTuning = this.voice): string {
+    return [
+      voice.voiceName,
+      voice.style ?? "",
+      voice.rate ?? "",
+      voice.pitch ?? "",
+      voice.styleDegree ?? "",
+    ].join("|");
   }
 }
 
